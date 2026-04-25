@@ -59,7 +59,7 @@ export function RevenueChartWidget({ className }: { className?: string }) {
               width={64}
             />
             <Tooltip
-              formatter={(v: number) => [fmtAud(v), "Revenue"]}
+              formatter={(v) => [fmtAud(Number(v)), "Revenue"]}
               contentStyle={{
                 background: "var(--popover)",
                 border: "1px solid var(--border)",
