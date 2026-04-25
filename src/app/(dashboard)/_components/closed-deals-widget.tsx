@@ -1,14 +1,56 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { createClient } from "@/lib/supabase/client";
 
 const RANGES = ["Day", "Week", "Month", "Quarter", "H1", "All-Time"] as const;
 type Range = (typeof RANGES)[number];
 
+const RANGE_DAYS: Record<Range, number> = {
+  "Day":       1,
+  "Week":      7,
+  "Month":     30,
+  "Quarter":   90,
+  "H1":        180,
+  "All-Time":  0,   // 0 means no date filter
+};
+
 export function ClosedDealsWidget() {
-  const [range, setRange] = useState<Range>("Month");
+  const [range, setRange]   = useState<Range>("Month");
+  const [count, setCount]   = useState<number>(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchCount() {
+      setLoading(true);
+      const supabase = createClient();
+
+      // Count rows in stage_history where a deal transitioned TO live_client
+      let query = supabase
+        .from("stage_history")
+        .select("id", { count: "exact", head: true })
+        .eq("to_stage", "live_client");
+
+      const days = RANGE_DAYS[range];
+      if (days > 0) {
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+        query = query.gte("changed_at", since);
+      }
+
+      const { count: total } = await query;
+      if (!cancelled) {
+        setCount(total ?? 0);
+        setLoading(false);
+      }
+    }
+
+    fetchCount();
+    return () => { cancelled = true; };
+  }, [range]);
 
   return (
     <Card>
@@ -33,9 +75,16 @@ export function ClosedDealsWidget() {
           ))}
         </div>
         <div className="py-6 text-center">
-          <p className="text-6xl font-bold tracking-tight">0</p>
+          <p
+            className={cn(
+              "text-6xl font-bold tracking-tight transition-opacity",
+              loading && "opacity-30",
+            )}
+          >
+            {count}
+          </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            deals closed · {range}
+            deals reached Live Client · {range}
           </p>
         </div>
       </CardContent>

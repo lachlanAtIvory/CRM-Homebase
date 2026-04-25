@@ -1,81 +1,59 @@
-"use client";
-
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { createClient } from "@/lib/supabase/server";
+import { RevenueChart, type RevenueDataPoint } from "./revenue-chart";
 
-const PLACEHOLDER_DATA = [
-  { month: "Oct", revenue: 4200 },
-  { month: "Nov", revenue: 6800 },
-  { month: "Dec", revenue: 5100 },
-  { month: "Jan", revenue: 8400 },
-  { month: "Feb", revenue: 9200 },
-  { month: "Mar", revenue: 11500 },
-  { month: "Apr", revenue: 13200 },
-];
+export async function RevenueChartWidget({ className }: { className?: string }) {
+  const supabase = await createClient();
 
-function fmtAud(value: number) {
-  return `$${value.toLocaleString("en-AU")}`;
-}
+  // Find deals that transitioned to live_client (= revenue events), with their value
+  const { data: history } = await supabase
+    .from("stage_history")
+    .select("changed_at, deal_id")
+    .eq("to_stage", "live_client")
+    .order("changed_at", { ascending: true });
 
-export function RevenueChartWidget({ className }: { className?: string }) {
+  let chartData: RevenueDataPoint[] = [];
+
+  if (history && history.length > 0) {
+    const dealIds = history.map((h) => h.deal_id);
+
+    const { data: deals } = await supabase
+      .from("deals")
+      .select("id, deal_value_aud")
+      .in("id", dealIds);
+
+    const valueById = Object.fromEntries(
+      (deals ?? []).map((d) => [d.id, d.deal_value_aud ?? 0]),
+    );
+
+    // Group by "Mon YY"
+    const byMonth: Record<string, number> = {};
+    for (const h of history) {
+      const label = new Date(h.changed_at).toLocaleDateString("en-AU", {
+        month: "short",
+        year:  "2-digit",
+      });
+      byMonth[label] = (byMonth[label] ?? 0) + (valueById[h.deal_id] ?? 0);
+    }
+
+    chartData = Object.entries(byMonth).map(([month, revenue]) => ({
+      month,
+      revenue,
+    }));
+  }
+
+  const hasRevenue = chartData.some((d) => d.revenue > 0);
+
   return (
     <Card className={className}>
       <CardHeader>
         <CardTitle>Revenue</CardTitle>
-        <p className="text-xs text-muted-foreground">Placeholder data · AUD</p>
+        <p className="text-xs text-muted-foreground">
+          {hasRevenue ? "Live clients · AUD" : "Awaiting live data · AUD"}
+        </p>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={200}>
-          <AreaChart
-            data={PLACEHOLDER_DATA}
-            margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
-          >
-            <defs>
-              <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis
-              dataKey="month"
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-              tickLine={false}
-              axisLine={false}
-            />
-            <YAxis
-              tickFormatter={fmtAud}
-              tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-              tickLine={false}
-              axisLine={false}
-              width={64}
-            />
-            <Tooltip
-              formatter={(v) => [fmtAud(Number(v)), "Revenue"]}
-              contentStyle={{
-                background: "var(--popover)",
-                border: "1px solid var(--border)",
-                borderRadius: "8px",
-                fontSize: "12px",
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="revenue"
-              stroke="#6366f1"
-              strokeWidth={2}
-              fill="url(#revenueGradient)"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+        <RevenueChart data={chartData} />
       </CardContent>
     </Card>
   );

@@ -1,0 +1,206 @@
+{
+  "name": "1 · Sheet → Supabase",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Every 15 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "readOrSearch",
+        "documentId": {
+          "__rl": true,
+          "value": "1Jp6AefkNB_TlTQLbbfQtRdEuiKtcYZNb",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=1346453162",
+          "mode": "id"
+        },
+        "filtersUI": {},
+        "combineFilters": "AND",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000002",
+      "name": "Get All Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond-001",
+              "leftValue": "={{ $json['Sales Call Booked?'] }}",
+              "rightValue": "Yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-002",
+              "leftValue": "={{ $json['Leads Company Name'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000003",
+      "name": "Only booked leads",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const row = $input.item.json;\n\n// Determine current_stage: furthest 'Yes' wins (right → left)\nconst stageMap = [\n  { col: 'Live?',            stage: 'live_client'   },\n  { col: 'Activated?',       stage: 'activated'     },\n  { col: 'Final Test?',      stage: 'final_testing' },\n  { col: 'Setting Up?',      stage: 'onboarding'    },\n  { col: 'Approved?',        stage: 'approved'      },\n  { col: 'Quoted?',          stage: 'quoted'        },\n  { col: 'Document Sent?',   stage: 'document_sent' },\n  { col: 'Sales Call Booked?', stage: 'call_booked' },\n];\n\nlet currentStage = 'call_booked';\nfor (const { col, stage } of stageMap) {\n  if ((row[col] || '').toString().toLowerCase().trim() === 'yes') {\n    currentStage = stage;\n    break;\n  }\n}\n\n// Status override\nconst status = (row['Status?'] || '').toString().toLowerCase().trim();\nif (status === 'lost')   currentStage = 'closed_lost';\nif (status === 'paused') currentStage = 'paused';\n\n// Deal value\nconst rawValue = row['Deal Value ($)'];\nconst dealValue = rawValue && rawValue.toString().trim() !== '' && rawValue.toString().trim() !== 'N/A'\n  ? parseFloat(rawValue.toString().replace(/[^0-9.]/g, ''))\n  : null;\n\n// Invoice URL (null-safe)\nconst invoiceUrl = row['Invoice URL'] && row['Invoice URL'].toString().trim() !== ''\n  ? row['Invoice URL'].toString().trim()\n  : null;\n\n// Job URL and Scraped From (treat 'N/A' as null)\nconst jobUrl = row['Job Url'] && row['Job Url'] !== 'N/A' ? row['Job Url'] : null;\nconst scrapedFrom = row['Scraped From'] && row['Scraped From'] !== 'N/A' ? row['Scraped From'] : null;\n\nreturn {\n  json: {\n    ...row,\n    _stage:      currentStage,\n    _dealValue:  dealValue,\n    _invoiceUrl: invoiceUrl,\n    _jobUrl:     jobUrl,\n    _scrapedFrom: scrapedFrom,\n    _rowId:      String(row['row_number']),\n  }\n};"
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000004",
+      "name": "Compute Stage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "record",
+        "operation": "upsert",
+        "tableId": "clients",
+        "conflictColumns": "sheet_row_id",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "company_name",
+              "fieldValue": "={{ $json['Leads Company Name'] }}"
+            },
+            {
+              "fieldId": "contact_name",
+              "fieldValue": "={{ $json['Contact Name'] || null }}"
+            },
+            {
+              "fieldId": "job_advert_url",
+              "fieldValue": "={{ $json._jobUrl }}"
+            },
+            {
+              "fieldId": "scraped_from",
+              "fieldValue": "={{ $json._scrapedFrom }}"
+            },
+            {
+              "fieldId": "notes",
+              "fieldValue": "={{ $json['Notes'] || null }}"
+            },
+            {
+              "fieldId": "sheet_row_id",
+              "fieldValue": "={{ $json._rowId }}"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000005",
+      "name": "Upsert Client",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "resource": "record",
+        "operation": "upsert",
+        "tableId": "deals",
+        "conflictColumns": "sheet_row_id",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "client_id",
+              "fieldValue": "={{ $json.id }}"
+            },
+            {
+              "fieldId": "current_stage",
+              "fieldValue": "={{ $('Compute Stage').item.json._stage }}"
+            },
+            {
+              "fieldId": "deal_value_aud",
+              "fieldValue": "={{ $('Compute Stage').item.json._dealValue }}"
+            },
+            {
+              "fieldId": "invoice_url",
+              "fieldValue": "={{ $('Compute Stage').item.json._invoiceUrl }}"
+            },
+            {
+              "fieldId": "sheet_row_id",
+              "fieldValue": "={{ $('Compute Stage').item.json._rowId }}"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-0001-0001-0001-000000000006",
+      "name": "Upsert Deal",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 min": {
+      "main": [
+        [{ "node": "Get All Rows",       "type": "main", "index": 0 }]
+      ]
+    },
+    "Get All Rows": {
+      "main": [
+        [{ "node": "Only booked leads",  "type": "main", "index": 0 }]
+      ]
+    },
+    "Only booked leads": {
+      "main": [
+        [{ "node": "Compute Stage",      "type": "main", "index": 0 }]
+      ]
+    },
+    "Compute Stage": {
+      "main": [
+        [{ "node": "Upsert Client",      "type": "main", "index": 0 }]
+      ]
+    },
+    "Upsert Client": {
+      "main": [
+        [{ "node": "Upsert Deal",        "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "agent-ivory-crm"
+  }
+}
