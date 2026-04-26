@@ -82,7 +82,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const row = $input.item.json;\n\n// Determine current_stage: furthest 'Yes' wins (right → left)\nconst stageMap = [\n  { col: 'Live?',            stage: 'live_client'   },\n  { col: 'Activated?',       stage: 'activated'     },\n  { col: 'Final Test?',      stage: 'final_testing' },\n  { col: 'Setting Up?',      stage: 'onboarding'    },\n  { col: 'Approved?',        stage: 'approved'      },\n  { col: 'Quoted?',          stage: 'quoted'        },\n  { col: 'Document Sent?',   stage: 'document_sent' },\n  { col: 'Sales Call Booked?', stage: 'call_booked' },\n];\n\nlet currentStage = 'call_booked';\nfor (const { col, stage } of stageMap) {\n  if ((row[col] || '').toString().toLowerCase().trim() === 'yes') {\n    currentStage = stage;\n    break;\n  }\n}\n\n// Status override\nconst status = (row['Status?'] || '').toString().toLowerCase().trim();\nif (status === 'lost')   currentStage = 'closed_lost';\nif (status === 'paused') currentStage = 'paused';\n\n// Deal value\nconst rawValue = row['Deal Value ($)'];\nconst dealValue = rawValue && rawValue.toString().trim() !== '' && rawValue.toString().trim() !== 'N/A'\n  ? parseFloat(rawValue.toString().replace(/[^0-9.]/g, ''))\n  : null;\n\n// Invoice URL (null-safe)\nconst invoiceUrl = row['Invoice URL'] && row['Invoice URL'].toString().trim() !== ''\n  ? row['Invoice URL'].toString().trim()\n  : null;\n\n// Job URL and Scraped From (treat 'N/A' as null)\nconst jobUrl = row['Job Url'] && row['Job Url'] !== 'N/A' ? row['Job Url'] : null;\nconst scrapedFrom = row['Scraped From'] && row['Scraped From'] !== 'N/A' ? row['Scraped From'] : null;\n\nreturn {\n  json: {\n    ...row,\n    _stage:      currentStage,\n    _dealValue:  dealValue,\n    _invoiceUrl: invoiceUrl,\n    _jobUrl:     jobUrl,\n    _scrapedFrom: scrapedFrom,\n    _rowId:      String(row['row_number']),\n  }\n};"
+        "jsCode": "const row = $input.item.json;\n\n// Determine current_stage: furthest 'Yes' wins (right → left)\nconst stageMap = [\n  { col: 'Live?',            stage: 'live_client'   },\n  { col: 'Activated?',       stage: 'activated'     },\n  { col: 'Final Test?',      stage: 'final_testing' },\n  { col: 'Setting Up?',      stage: 'onboarding'    },\n  { col: 'Approved?',        stage: 'approved'      },\n  { col: 'Quoted?',          stage: 'quoted'        },\n  { col: 'Document Sent?',   stage: 'document_sent' },\n  { col: 'Sales Call Booked?', stage: 'call_booked' },\n];\n\nlet currentStage = 'call_booked';\nfor (const { col, stage } of stageMap) {\n  if ((row[col] || '').toString().toLowerCase().trim() === 'yes') {\n    currentStage = stage;\n    break;\n  }\n}\n\n// Status override\nconst status = (row['Status?'] || '').toString().toLowerCase().trim();\nif (status === 'lost')   currentStage = 'closed_lost';\nif (status === 'paused') currentStage = 'paused';\n\n// Deal value\nconst rawValue = row['Deal Value ($)'];\nconst dealValue = rawValue && rawValue.toString().trim() !== '' && rawValue.toString().trim() !== 'N/A'\n  ? parseFloat(rawValue.toString().replace(/[^0-9.]/g, ''))\n  : null;\n\n// Invoice URL\nconst invoiceUrl = row['Invoice URL'] && row['Invoice URL'].toString().trim() !== ''\n  ? row['Invoice URL'].toString().trim()\n  : null;\n\n// Job URL and Scraped From (treat 'N/A' as null)\nconst jobUrl = row['Job Url'] && row['Job Url'] !== 'N/A' ? row['Job Url'] : null;\nconst scrapedFrom = row['Scraped From'] && row['Scraped From'] !== 'N/A' ? row['Scraped From'] : null;\nconst rowId = String(row['row_number']);\n\n// Pre-build the client JSON body string\nconst clientBody = JSON.stringify({\n  company_name: row['Leads Company Name'],\n  contact_name: row['Contact Name'] || null,\n  job_advert_url: jobUrl,\n  scraped_from: scrapedFrom,\n  notes: row['Notes'] || null,\n  sheet_row_id: rowId\n});\n\nreturn {\n  json: {\n    ...row,\n    _stage:       currentStage,\n    _dealValue:   dealValue,\n    _invoiceUrl:  invoiceUrl,\n    _rowId:       rowId,\n    _clientBody:  clientBody,\n  }\n};"
       },
       "id": "a1b2c3d4-0001-0001-0001-000000000004",
       "name": "Compute Stage",
@@ -92,107 +92,103 @@
     },
     {
       "parameters": {
-        "resource": "record",
-        "operation": "upsert",
-        "tableId": "clients",
-        "conflictColumns": "sheet_row_id",
-        "fieldsUi": {
-          "fieldValues": [
+        "method": "POST",
+        "url": "https://jupkvwohkgfulwjcdhis.supabase.co/rest/v1/clients",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "fieldId": "company_name",
-              "fieldValue": "={{ $json['Leads Company Name'] }}"
+              "name": "apikey",
+              "value": "REPLACE_WITH_YOUR_SERVICE_ROLE_KEY"
             },
             {
-              "fieldId": "contact_name",
-              "fieldValue": "={{ $json['Contact Name'] || null }}"
+              "name": "Authorization",
+              "value": "Bearer REPLACE_WITH_YOUR_SERVICE_ROLE_KEY"
             },
             {
-              "fieldId": "job_advert_url",
-              "fieldValue": "={{ $json._jobUrl }}"
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
             },
             {
-              "fieldId": "scraped_from",
-              "fieldValue": "={{ $json._scrapedFrom }}"
-            },
-            {
-              "fieldId": "notes",
-              "fieldValue": "={{ $json['Notes'] || null }}"
-            },
-            {
-              "fieldId": "sheet_row_id",
-              "fieldValue": "={{ $json._rowId }}"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
-        }
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json._clientBody }}",
+        "options": {}
       },
       "id": "a1b2c3d4-0001-0001-0001-000000000005",
       "name": "Upsert Client",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [1120, 300]
     },
     {
       "parameters": {
-        "resource": "record",
-        "operation": "upsert",
-        "tableId": "deals",
-        "conflictColumns": "sheet_row_id",
-        "fieldsUi": {
-          "fieldValues": [
+        "method": "POST",
+        "url": "https://jupkvwohkgfulwjcdhis.supabase.co/rest/v1/deals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "fieldId": "client_id",
-              "fieldValue": "={{ $json.id }}"
+              "name": "apikey",
+              "value": "REPLACE_WITH_YOUR_SERVICE_ROLE_KEY"
             },
             {
-              "fieldId": "current_stage",
-              "fieldValue": "={{ $('Compute Stage').item.json._stage }}"
+              "name": "Authorization",
+              "value": "Bearer REPLACE_WITH_YOUR_SERVICE_ROLE_KEY"
             },
             {
-              "fieldId": "deal_value_aud",
-              "fieldValue": "={{ $('Compute Stage').item.json._dealValue }}"
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
             },
             {
-              "fieldId": "invoice_url",
-              "fieldValue": "={{ $('Compute Stage').item.json._invoiceUrl }}"
-            },
-            {
-              "fieldId": "sheet_row_id",
-              "fieldValue": "={{ $('Compute Stage').item.json._rowId }}"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
-        }
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ client_id: $('Upsert Client').item.json[0].id, current_stage: $('Compute Stage').item.json._stage, deal_value_aud: $('Compute Stage').item.json._dealValue, invoice_url: $('Compute Stage').item.json._invoiceUrl, sheet_row_id: $('Compute Stage').item.json._rowId }) }}",
+        "options": {}
       },
       "id": "a1b2c3d4-0001-0001-0001-000000000006",
       "name": "Upsert Deal",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [1340, 300]
     }
   ],
   "connections": {
     "Every 15 min": {
       "main": [
-        [{ "node": "Get All Rows",       "type": "main", "index": 0 }]
+        [{ "node": "Get All Rows",      "type": "main", "index": 0 }]
       ]
     },
     "Get All Rows": {
       "main": [
-        [{ "node": "Only booked leads",  "type": "main", "index": 0 }]
+        [{ "node": "Only booked leads", "type": "main", "index": 0 }]
       ]
     },
     "Only booked leads": {
       "main": [
-        [{ "node": "Compute Stage",      "type": "main", "index": 0 }]
+        [{ "node": "Compute Stage",     "type": "main", "index": 0 }]
       ]
     },
     "Compute Stage": {
       "main": [
-        [{ "node": "Upsert Client",      "type": "main", "index": 0 }]
+        [{ "node": "Upsert Client",     "type": "main", "index": 0 }]
       ]
     },
     "Upsert Client": {
       "main": [
-        [{ "node": "Upsert Deal",        "type": "main", "index": 0 }]
+        [{ "node": "Upsert Deal",       "type": "main", "index": 0 }]
       ]
     }
   },
