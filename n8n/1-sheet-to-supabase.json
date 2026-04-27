@@ -16,7 +16,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://sheets.googleapis.com/v4/spreadsheets/1Jp6AefkNB_TlTQLbbfQtRdEuiKtcYZNb/values/Agent%20Ivory%20-%20Warm%20Leads%20CRM!A:Y",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/1QU15-Jc5nGGY_xSQbZ22ED5WtETpzyChQfCs5Y_bNK8/values/Leads!A:Y",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "googleSheetsOAuth2Api",
         "sendQuery": true,
@@ -36,7 +36,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Parse the Sheets API response into row objects\nconst { values } = $input.first().json;\nif (!values || values.length < 2) return [];\n\nconst headers = values[0];\nreturn values\n  .slice(1)\n  .map((row, idx) => ({\n    json: {\n      ...Object.fromEntries(headers.map((h, j) => [h, row[j] ?? ''])),\n      row_number: idx + 2  // 1-indexed; row 1 is header\n    }\n  }))\n  .filter(item => item.json['Leads Company Name'] !== '');"
+        "jsCode": "// Parse the Sheets API response into row objects\nconst { values } = $input.first().json;\nif (!values || values.length < 2) return [];\n\nconst headers = values[0];\nreturn values\n  .slice(1)\n  .map((row, idx) => ({\n    json: {\n      ...Object.fromEntries(headers.map((h, j) => [h, row[j] ?? ''])),\n      row_number: idx + 2  // 1-indexed; row 1 is header\n    }\n  }))\n  .filter(item => item.json['Company Name'] !== '');"
       },
       "id": "a1b2c3d4-0001-0001-0001-000000000008",
       "name": "Parse Rows",
@@ -57,7 +57,7 @@
             },
             {
               "id": "cond-002",
-              "leftValue": "={{ $json['Leads Company Name'] }}",
+              "leftValue": "={{ $json['Company Name'] }}",
               "rightValue": "",
               "operator": { "type": "string", "operation": "isNotEmpty" }
             }
@@ -75,7 +75,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const row = $input.item.json;\n\nconst stageMap = [\n  { col: 'Live?',              stage: 'live_client'   },\n  { col: 'Activated?',         stage: 'activated'     },\n  { col: 'Final Test?',        stage: 'final_testing' },\n  { col: 'Setting Up?',        stage: 'onboarding'    },\n  { col: 'Approved?',          stage: 'approved'      },\n  { col: 'Quoted?',            stage: 'quoted'        },\n  { col: 'Document Sent?',     stage: 'document_sent' },\n  { col: 'Sales Call Booked?', stage: 'call_booked'   },\n];\n\nlet currentStage = 'call_booked';\nfor (const { col, stage } of stageMap) {\n  if ((row[col] || '').toString().toLowerCase().trim() === 'yes') {\n    currentStage = stage;\n    break;\n  }\n}\n\nconst status = (row['Status?'] || '').toString().toLowerCase().trim();\nif (status === 'lost')   currentStage = 'closed_lost';\nif (status === 'paused') currentStage = 'paused';\n\nconst rawValue = row['Deal Value ($)'];\nconst dealValue = rawValue && rawValue.toString().trim() !== '' && rawValue.toString().trim() !== 'N/A'\n  ? parseFloat(rawValue.toString().replace(/[^0-9.]/g, ''))\n  : null;\n\nconst invoiceUrl = row['Invoice URL'] && row['Invoice URL'].toString().trim() !== ''\n  ? row['Invoice URL'].toString().trim() : null;\n\nconst jobUrl = row['Job Url'] && row['Job Url'] !== 'N/A' ? row['Job Url'] : null;\nconst scrapedFrom = row['Scraped From'] && row['Scraped From'] !== 'N/A' ? row['Scraped From'] : null;\nconst rowId = String(row['row_number']);\n\nconst clientBody = JSON.stringify({\n  company_name:  row['Leads Company Name'],\n  contact_name:  row['Contact Name'] || null,\n  job_advert_url: jobUrl,\n  scraped_from:  scrapedFrom,\n  notes:         row['Notes'] || null,\n  sheet_row_id:  rowId\n});\n\nreturn {\n  json: {\n    ...row,\n    _stage:      currentStage,\n    _dealValue:  dealValue,\n    _invoiceUrl: invoiceUrl,\n    _rowId:      rowId,\n    _clientBody: clientBody,\n  }\n};"
+        "jsCode": "const row = $input.item.json;\n\nconst stageMap = [\n  { col: 'Live?',              stage: 'live_client'   },\n  { col: 'Activated?',         stage: 'activated'     },\n  { col: 'Final Test?',        stage: 'final_testing' },\n  { col: 'Setting Up?',        stage: 'onboarding'    },\n  { col: 'Approved?',          stage: 'approved'      },\n  { col: 'Quoted?',            stage: 'quoted'        },\n  { col: 'Document Sent?',     stage: 'document_sent' },\n  { col: 'Sales Call Booked?', stage: 'call_booked'   },\n];\n\nlet currentStage = 'call_booked';\nfor (const { col, stage } of stageMap) {\n  if ((row[col] || '').toString().toLowerCase().trim() === 'yes') {\n    currentStage = stage;\n    break;\n  }\n}\n\nconst status = (row['Status?'] || '').toString().toLowerCase().trim();\nif (status === 'lost')   currentStage = 'closed_lost';\nif (status === 'paused') currentStage = 'paused';\n\nconst rawValue = row['Deal Value ($)'];\nconst dealValue = rawValue && rawValue.toString().trim() !== '' && rawValue.toString().trim() !== 'N/A'\n  ? parseFloat(rawValue.toString().replace(/[^0-9.]/g, ''))\n  : null;\n\nconst invoiceUrl = row['Invoice URL'] && row['Invoice URL'].toString().trim() !== ''\n  ? row['Invoice URL'].toString().trim() : null;\n\nconst jobUrl = row['Job Url'] && row['Job Url'] !== 'N/A' ? row['Job Url'] : null;\nconst scrapedFrom = row['Scraped From'] && row['Scraped From'] !== 'N/A' ? row['Scraped From'] : null;\nconst rowId = String(row['row_number']);\n\nconst clientBody = JSON.stringify({\n  company_name:  row['Company Name'],\n  contact_name:  row['Contact Name'] || null,\n  job_advert_url: jobUrl,\n  scraped_from:  scrapedFrom,\n  notes:         row['Notes'] || null,\n  sheet_row_id:  rowId\n});\n\nreturn {\n  json: {\n    ...row,\n    _stage:      currentStage,\n    _dealValue:  dealValue,\n    _invoiceUrl: invoiceUrl,\n    _rowId:      rowId,\n    _clientBody: clientBody,\n  }\n};"
       },
       "id": "a1b2c3d4-0001-0001-0001-000000000004",
       "name": "Compute Stage",
