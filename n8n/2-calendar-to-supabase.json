@@ -52,7 +52,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://jupkvwohkgfulwjcdhis.supabase.co/rest/v1/meetings",
+        "url": "https://jupkvwohkgfulwjcdhis.supabase.co/rest/v1/meetings?on_conflict=event_id",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
