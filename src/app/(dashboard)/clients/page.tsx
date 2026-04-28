@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Table,
   TableBody,
@@ -69,9 +70,11 @@ export default async function ClientsPage() {
                 : "—";
 
               return (
-                <TableRow key={client.id}>
+                <TableRow key={client.id} className="cursor-pointer hover:bg-muted/50">
                   <TableCell className="font-medium">
-                    {client.company_name}
+                    <Link href={`/clients/${client.id}`} className="hover:underline">
+                      {client.company_name}
+                    </Link>
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {client.contact_name ?? "—"}
