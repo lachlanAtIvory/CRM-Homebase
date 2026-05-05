@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { ClientForm } from "./client-form";
+import { TasksSection } from "./tasks-section";
 
 const STAGE_LABELS: Record<string, string> = {
   call_booked:   "Call Booked",
@@ -25,11 +26,18 @@ export default async function ClientDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: client } = await supabase
-    .from("clients")
-    .select("*, deals(current_stage, deal_value_aud, sheet_row_id, updated_at)")
-    .eq("id", id)
-    .single();
+  const [{ data: client }, { data: tasks }] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("*, deals(current_stage, deal_value_aud, sheet_row_id, updated_at)")
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("tasks")
+      .select("id, title, due_date, completed_at, created_at")
+      .eq("client_id", id)
+      .order("created_at", { ascending: false }),
+  ]);
 
   if (!client) notFound();
 
@@ -73,13 +81,19 @@ export default async function ClientDetailPage({
       <ClientForm
         id={client.id}
         initialValues={{
-          contact_name:  client.contact_name  ?? "",
-          phone:         client.phone         ?? "",
-          email:         client.email         ?? "",
-          website:       (client as any).website      ?? "",
-          notes:         client.notes         ?? "",
+          contact_name:  client.contact_name       ?? "",
+          phone:         client.phone              ?? "",
+          email:         client.email              ?? "",
+          website:       (client as any).website   ?? "",
+          notes:         client.notes              ?? "",
           active_tools:  (client as any).active_tools ?? [],
         }}
+      />
+
+      {/* Tasks */}
+      <TasksSection
+        clientId={client.id}
+        initialTasks={tasks ?? []}
       />
     </div>
   );

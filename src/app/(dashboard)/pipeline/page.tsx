@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 
 const STAGE_CONFIG = [
@@ -16,12 +17,20 @@ function fmtAud(v: number | null | undefined) {
   return `$${v.toLocaleString("en-AU")}`;
 }
 
+function hasOverdueTasks(tasks: { due_date: string | null; completed_at: string | null }[]) {
+  const today = new Date().toISOString().split("T")[0];
+  return tasks.some((t) => !t.completed_at && t.due_date && t.due_date < today);
+}
+
 export default async function PipelinePage() {
   const supabase = await createClient();
 
   const { data: deals } = await supabase
     .from("deals")
-    .select("id, current_stage, deal_value_aud, updated_at, clients(company_name, contact_name)")
+    .select(`
+      id, current_stage, deal_value_aud, updated_at,
+      clients(id, company_name, contact_name, tasks(due_date, completed_at))
+    `)
     .not("current_stage", "in", '("closed_lost","paused")')
     .order("updated_at", { ascending: false });
 
@@ -57,26 +66,47 @@ export default async function PipelinePage() {
                     const client = Array.isArray(deal.clients)
                       ? deal.clients[0]
                       : deal.clients;
-                    const value = fmtAud(deal.deal_value_aud);
-                    return (
-                      <div
-                        key={deal.id}
-                        className="rounded-lg border bg-background p-3 shadow-sm"
-                      >
-                        <p className="text-sm font-medium leading-tight">
-                          {client?.company_name ?? "—"}
-                        </p>
-                        {client?.contact_name && (
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {client.contact_name}
-                          </p>
-                        )}
-                        {value && (
-                          <p className="mt-1.5 text-xs font-semibold text-emerald-600">
-                            {value}
-                          </p>
-                        )}
+                    const tasks   = Array.isArray((client as any)?.tasks)
+                      ? (client as any).tasks
+                      : [];
+                    const overdue = hasOverdueTasks(tasks);
+                    const value   = fmtAud(deal.deal_value_aud);
+                    const clientId = (client as any)?.id;
+
+                    const card = (
+                      <div className="rounded-lg border bg-background p-3 shadow-sm transition-colors hover:bg-muted/40">
+                        <div className="flex items-start gap-2">
+                          {overdue && (
+                            <span
+                              className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                              title="Overdue task"
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium leading-tight">
+                              {client?.company_name ?? "—"}
+                            </p>
+                            {client?.contact_name && (
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {client.contact_name}
+                              </p>
+                            )}
+                            {value && (
+                              <p className="mt-1.5 text-xs font-semibold text-emerald-600">
+                                {value}
+                              </p>
+                            )}
+                          </div>
+                        </div>
                       </div>
+                    );
+
+                    return clientId ? (
+                      <Link key={deal.id} href={`/clients/${clientId}`}>
+                        {card}
+                      </Link>
+                    ) : (
+                      <div key={deal.id}>{card}</div>
                     );
                   })
                 )}

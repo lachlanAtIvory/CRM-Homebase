@@ -27,12 +27,21 @@ function fmtAud(v: number | null | undefined) {
   return `$${v.toLocaleString("en-AU")}`;
 }
 
+function hasOverdueTasks(tasks: { due_date: string | null; completed_at: string | null }[]) {
+  const today = new Date().toISOString().split("T")[0];
+  return tasks.some((t) => !t.completed_at && t.due_date && t.due_date < today);
+}
+
 export default async function ClientsPage() {
   const supabase = await createClient();
 
   const { data: clients } = await supabase
     .from("clients")
-    .select("id, company_name, contact_name, deals(current_stage, deal_value_aud, updated_at)")
+    .select(`
+      id, company_name, contact_name,
+      deals(current_stage, deal_value_aud, updated_at),
+      tasks(due_date, completed_at)
+    `)
     .order("created_at", { ascending: false });
 
   return (
@@ -59,20 +68,29 @@ export default async function ClientsPage() {
             </TableRow>
           ) : (
             clients.map((client) => {
-              const deals = Array.isArray(client.deals) ? client.deals : [];
-              const deal = deals[0];
+              const deals  = Array.isArray(client.deals) ? client.deals : [];
+              const tasks  = Array.isArray(client.tasks) ? client.tasks : [];
+              const deal   = deals[0];
+              const overdue = hasOverdueTasks(tasks);
               const updatedAt = deal?.updated_at
                 ? new Date(deal.updated_at).toLocaleDateString("en-AU", {
-                    day: "numeric",
-                    month: "short",
-                    year: "2-digit",
+                    day: "numeric", month: "short", year: "2-digit",
                   })
                 : "—";
 
               return (
                 <TableRow key={client.id} className="cursor-pointer hover:bg-muted/50">
                   <TableCell className="font-medium">
-                    <Link href={`/clients/${client.id}`} className="hover:underline">
+                    <Link
+                      href={`/clients/${client.id}`}
+                      className="inline-flex items-center gap-2 hover:underline"
+                    >
+                      {overdue && (
+                        <span
+                          className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                          title="Overdue task"
+                        />
+                      )}
                       {client.company_name}
                     </Link>
                   </TableCell>
@@ -84,14 +102,10 @@ export default async function ClientsPage() {
                       <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
                         {STAGE_LABELS[deal.current_stage] ?? deal.current_stage}
                       </span>
-                    ) : (
-                      "—"
-                    )}
+                    ) : "—"}
                   </TableCell>
                   <TableCell>{fmtAud(deal?.deal_value_aud)}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {updatedAt}
-                  </TableCell>
+                  <TableCell className="text-muted-foreground">{updatedAt}</TableCell>
                 </TableRow>
               );
             })
