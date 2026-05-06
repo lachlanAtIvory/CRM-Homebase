@@ -27,22 +27,25 @@ function fmtAud(v: number | null | undefined) {
   return `$${v.toLocaleString("en-AU")}`;
 }
 
-function hasOverdueTasks(tasks: { due_date: string | null; completed_at: string | null }[]) {
-  const today = new Date().toISOString().split("T")[0];
-  return tasks.some((t) => !t.completed_at && t.due_date && t.due_date < today);
-}
 
 export default async function ClientsPage() {
   const supabase = await createClient();
 
-  const { data: clients } = await supabase
-    .from("clients")
-    .select(`
-      id, company_name, contact_name,
-      deals(current_stage, deal_value_aud, updated_at),
-      tasks(due_date, completed_at)
-    `)
-    .order("created_at", { ascending: false });
+  const today = new Date().toISOString().split("T")[0];
+
+  const [{ data: clients }, { data: overdueTasks }] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id, company_name, contact_name, deals(current_stage, deal_value_aud, updated_at)")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("tasks")
+      .select("client_id")
+      .is("completed_at", null)
+      .lt("due_date", today),
+  ]);
+
+  const overdueClientIds = new Set((overdueTasks ?? []).map((t) => t.client_id));
 
   return (
     <div className="rounded-xl border bg-card ring-1 ring-foreground/5">
@@ -69,9 +72,8 @@ export default async function ClientsPage() {
           ) : (
             clients.map((client) => {
               const deals  = Array.isArray(client.deals) ? client.deals : [];
-              const tasks  = Array.isArray(client.tasks) ? client.tasks : [];
               const deal   = deals[0];
-              const overdue = hasOverdueTasks(tasks);
+              const overdue = overdueClientIds.has(client.id);
               const updatedAt = deal?.updated_at
                 ? new Date(deal.updated_at).toLocaleDateString("en-AU", {
                     day: "numeric", month: "short", year: "2-digit",

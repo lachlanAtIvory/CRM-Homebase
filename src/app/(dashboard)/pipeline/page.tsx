@@ -17,22 +17,24 @@ function fmtAud(v: number | null | undefined) {
   return `$${v.toLocaleString("en-AU")}`;
 }
 
-function hasOverdueTasks(tasks: { due_date: string | null; completed_at: string | null }[]) {
-  const today = new Date().toISOString().split("T")[0];
-  return tasks.some((t) => !t.completed_at && t.due_date && t.due_date < today);
-}
-
 export default async function PipelinePage() {
   const supabase = await createClient();
+  const today    = new Date().toISOString().split("T")[0];
 
-  const { data: deals } = await supabase
-    .from("deals")
-    .select(`
-      id, current_stage, deal_value_aud, updated_at,
-      clients(id, company_name, contact_name, tasks(due_date, completed_at))
-    `)
-    .not("current_stage", "in", '("closed_lost","paused")')
-    .order("updated_at", { ascending: false });
+  const [{ data: deals }, { data: overdueTasks }] = await Promise.all([
+    supabase
+      .from("deals")
+      .select("id, current_stage, deal_value_aud, updated_at, clients(id, company_name, contact_name)")
+      .not("current_stage", "in", '("closed_lost","paused")')
+      .order("updated_at", { ascending: false }),
+    supabase
+      .from("tasks")
+      .select("client_id")
+      .is("completed_at", null)
+      .lt("due_date", today),
+  ]);
+
+  const overdueClientIds = new Set((overdueTasks ?? []).map((t) => t.client_id));
 
   // Group deals by stage
   const byStage: Record<string, NonNullable<typeof deals>> = {};
@@ -63,15 +65,10 @@ export default async function PipelinePage() {
                   <div className="flex-1 rounded-lg border-2 border-dashed border-border/50 p-4" />
                 ) : (
                   col.map((deal) => {
-                    const client = Array.isArray(deal.clients)
-                      ? deal.clients[0]
-                      : deal.clients;
-                    const tasks   = Array.isArray((client as any)?.tasks)
-                      ? (client as any).tasks
-                      : [];
-                    const overdue = hasOverdueTasks(tasks);
-                    const value   = fmtAud(deal.deal_value_aud);
-                    const clientId = (client as any)?.id;
+                    const client   = Array.isArray(deal.clients) ? deal.clients[0] : deal.clients;
+                    const clientId = (client as any)?.id as string | undefined;
+                    const overdue  = clientId ? overdueClientIds.has(clientId) : false;
+                    const value    = fmtAud(deal.deal_value_aud);
 
                     const card = (
                       <div className="rounded-lg border bg-background p-3 shadow-sm transition-colors hover:bg-muted/40">
