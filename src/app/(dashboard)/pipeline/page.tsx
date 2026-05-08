@@ -21,12 +21,20 @@ export default async function PipelinePage() {
   const supabase = await createClient();
   const today    = new Date().toISOString().split("T")[0];
 
-  const [{ data: deals }, { data: overdueTasks }] = await Promise.all([
+  // Separate queries — avoids embedded-join schema-cache issues
+  const [
+    { data: deals },
+    { data: clients },
+    { data: overdueTasks },
+  ] = await Promise.all([
     supabase
       .from("deals")
-      .select("id, current_stage, deal_value_aud, updated_at, clients(id, company_name, contact_name)")
+      .select("id, client_id, current_stage, deal_value_aud, updated_at")
       .not("current_stage", "in", '("closed_lost","paused")')
       .order("updated_at", { ascending: false }),
+    supabase
+      .from("clients")
+      .select("id, company_name, contact_name"),
     supabase
       .from("tasks")
       .select("client_id")
@@ -34,7 +42,11 @@ export default async function PipelinePage() {
       .lt("due_date", today),
   ]);
 
-  const overdueClientIds = new Set((overdueTasks ?? []).map((t) => t.client_id));
+  // Index clients by id for O(1) lookup
+  const clientMap = new Map(
+    (clients ?? []).map((c) => [c.id, c])
+  );
+  const overdueClientIds = new Set((overdueTasks ?? []).map((t) => t.client_id as string));
 
   // Group deals by stage
   const byStage: Record<string, NonNullable<typeof deals>> = {};
@@ -65,10 +77,9 @@ export default async function PipelinePage() {
                   <div className="flex-1 rounded-lg border-2 border-dashed border-border/50 p-4" />
                 ) : (
                   col.map((deal) => {
-                    const client   = Array.isArray(deal.clients) ? deal.clients[0] : deal.clients;
-                    const clientId = (client as any)?.id as string | undefined;
-                    const overdue  = clientId ? overdueClientIds.has(clientId) : false;
-                    const value    = fmtAud(deal.deal_value_aud);
+                    const client = clientMap.get(deal.client_id);
+                    const overdue = client ? overdueClientIds.has(client.id) : false;
+                    const value   = fmtAud(deal.deal_value_aud);
 
                     const card = (
                       <div className="rounded-lg border bg-background p-3 shadow-sm transition-colors hover:bg-muted/40">
@@ -98,8 +109,8 @@ export default async function PipelinePage() {
                       </div>
                     );
 
-                    return clientId ? (
-                      <Link key={deal.id} href={`/clients/${clientId}`}>
+                    return client ? (
+                      <Link key={deal.id} href={`/clients/${client.id}`}>
                         {card}
                       </Link>
                     ) : (

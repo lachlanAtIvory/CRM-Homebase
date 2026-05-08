@@ -26,12 +26,23 @@ export default async function ClientDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: client }, { data: tasks }] = await Promise.all([
+  // Three separate queries — avoids any embedded-join schema-cache issues
+  const [
+    { data: client },
+    { data: deals },
+    { data: tasks },
+  ] = await Promise.all([
     supabase
       .from("clients")
-      .select("*, deals(current_stage, deal_value_aud, sheet_row_id, updated_at)")
+      .select("id, company_name, contact_name, phone, email, notes, website, active_tools")
       .eq("id", id)
       .single(),
+    supabase
+      .from("deals")
+      .select("current_stage, deal_value_aud, updated_at")
+      .eq("client_id", id)
+      .order("updated_at", { ascending: false })
+      .limit(1),
     supabase
       .from("tasks")
       .select("id, title, due_date, completed_at, created_at")
@@ -41,8 +52,7 @@ export default async function ClientDetailPage({
 
   if (!client) notFound();
 
-  const deals = Array.isArray(client.deals) ? client.deals : [];
-  const deal  = deals[0] ?? null;
+  const deal = Array.isArray(deals) ? deals[0] ?? null : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -81,11 +91,11 @@ export default async function ClientDetailPage({
       <ClientForm
         id={client.id}
         initialValues={{
-          contact_name:  client.contact_name       ?? "",
-          phone:         client.phone              ?? "",
-          email:         client.email              ?? "",
-          website:       (client as any).website   ?? "",
-          notes:         client.notes              ?? "",
+          contact_name:  client.contact_name  ?? "",
+          phone:         (client as any).phone        ?? "",
+          email:         (client as any).email        ?? "",
+          website:       (client as any).website      ?? "",
+          notes:         (client as any).notes        ?? "",
           active_tools:  (client as any).active_tools ?? [],
         }}
       />
