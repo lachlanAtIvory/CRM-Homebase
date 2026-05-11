@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut } from "lucide-react";
+import { LogOut, Rocket } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -17,12 +18,13 @@ import {
 import { signOut } from "@/lib/actions";
 
 const PAGE_TITLES: Record<string, string> = {
-  "/": "Home",
-  "/pipeline": "Pipeline",
-  "/clients": "Clients",
-  "/agents": "Agents",
-  "/calendar": "Calendar",
-  "/settings": "Settings",
+  "/":                "Home",
+  "/pipeline":        "Pipeline",
+  "/clients":         "Clients",
+  "/agents":          "Agents",
+  "/calendar":        "Calendar",
+  "/settings":        "Settings",
+  "/application/new": "Launch Application",
 };
 
 interface HeaderProps {
@@ -39,31 +41,42 @@ export function Header({ email, avatarUrl }: HeaderProps) {
     <header className="flex h-14 shrink-0 items-center justify-between border-b bg-background px-6">
       <h1 className="text-base font-semibold">{title}</h1>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          aria-label="User menu"
+      <div className="flex items-center gap-3">
+        {/* Launch Application — primary CTA in the top-right */}
+        <Link
+          href="/application/new"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
         >
-          <Avatar size="sm">
-            {avatarUrl && <AvatarImage src={avatarUrl} alt={email} />}
-            <AvatarFallback>{initials}</AvatarFallback>
-          </Avatar>
-        </DropdownMenuTrigger>
+          <Rocket size={13} />
+          Launch Application
+        </Link>
 
-        <DropdownMenuContent align="end" className="min-w-52">
-          <div className="truncate px-1.5 py-1 text-xs text-muted-foreground">
-            {email}
-          </div>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => signOut()}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            aria-label="User menu"
           >
-            <LogOut size={14} className="mr-2" />
-            Sign out
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <Avatar size="sm">
+              {avatarUrl && <AvatarImage src={avatarUrl} alt={email} />}
+              <AvatarFallback>{initials}</AvatarFallback>
+            </Avatar>
+          </DropdownMenuTrigger>
+
+          <DropdownMenuContent align="end" className="min-w-52">
+            <div className="truncate px-1.5 py-1 text-xs text-muted-foreground">
+              {email}
+            </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => signOut()}
+            >
+              <LogOut size={14} className="mr-2" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </header>
   );
 }
