@@ -4,8 +4,10 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays } from "lucide-react";
+import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays, Download, AlertCircle } from "lucide-react";
 import { saveDraft, submitApplication, type ApplicationInput, type TeamMember } from "./actions";
+import { computeCompletion } from "./completion";
+import { CompletionRing } from "./completion-ring";
 
 type Product = {
   key:              string;
@@ -56,8 +58,11 @@ function fmtAud(v: number) {
 export function ApplicationForm({ products }: { products: Product[] }) {
   const router = useRouter();
   const [v, setV] = useState<FormValues>(EMPTY);
-  const [busy, setBusy] = useState<"idle" | "draft" | "submit">("idle");
+  const [busy, setBusy] = useState<"idle" | "draft" | "submit" | "finalise">("idle");
   const [success, setSuccess] = useState<{ id: string; invoiceSent: boolean } | null>(null);
+
+  // Live completion calculation
+  const completion = useMemo(() => computeCompletion(v), [v]);
 
   // Live quote totals
   const { upfrontTotal, monthlyTotal } = useMemo(() => {
@@ -158,6 +163,82 @@ export function ApplicationForm({ products }: { products: Product[] }) {
     router.refresh();
   }
 
+  async function handleFinalise() {
+    if (!completion.canFinalise) {
+      toast.error("Required fields missing", {
+        description: completion.missingRequired.join(", "),
+      });
+      return;
+    }
+
+    setBusy("finalise");
+    try {
+      // 1. Save draft so DB always reflects latest before export
+      await saveDraft(buildPayload());
+
+      // 2. Dynamically import PDF libs (only loaded on first finalise click)
+      const [{ pdf }, { ApplicationPDF }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("./application-pdf"),
+      ]);
+
+      // 3. Build product data with full pricing for the PDF
+      const selectedProducts = products
+        .filter((p) => v.selected_products.includes(p.key))
+        .map((p) => ({
+          key:              p.key,
+          label:            p.label,
+          upfront_cost_aud: p.upfront_cost_aud,
+          monthly_cost_aud: p.monthly_cost_aud,
+        }));
+
+      const blob = await pdf(
+        <ApplicationPDF
+          data={{
+            company_name:        v.company_name,
+            owner_name:          v.owner_name,
+            contact_email:       v.contact_email,
+            contact_phone:       v.contact_phone,
+            abn:                 v.abn,
+            trading_address:     v.trading_address,
+            uses_single_calendar: v.uses_single_calendar,
+            team_members:        v.team_members,
+            selected_products:   selectedProducts,
+            upfront_total_aud:   upfrontTotal,
+            monthly_total_aud:   monthlyTotal,
+            goals:               v.goals,
+            requirements:        v.requirements,
+            generated_at:        new Date().toLocaleDateString("en-AU", {
+              day: "numeric", month: "long", year: "numeric",
+            }),
+          }}
+        />,
+      ).toBlob();
+
+      // 4. Trigger browser download
+      const url   = URL.createObjectURL(blob);
+      const slug  = v.company_name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const date  = new Date().toISOString().split("T")[0];
+      const link  = document.createElement("a");
+      link.href     = url;
+      link.download = `agent-ivory-application-${slug || "client"}-${date}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success("Application exported", {
+        description: "PDF downloaded — send it to Sassle to start setup.",
+      });
+    } catch (e) {
+      toast.error("Could not generate PDF", {
+        description: e instanceof Error ? e.message : "Try again in a moment.",
+      });
+    } finally {
+      setBusy("idle");
+    }
+  }
+
   if (success) {
     return (
       <SuccessPanel
@@ -172,6 +253,25 @@ export function ApplicationForm({ products }: { products: Product[] }) {
 
   return (
     <div className="space-y-6">
+      {/* ───────── Completion ring — sticky banner at top ───────── */}
+      <div className="sticky top-0 z-20 -mx-2 flex items-center gap-4 rounded-xl border bg-card/95 px-4 py-3 ring-1 ring-foreground/5 backdrop-blur-sm">
+        <CompletionRing percent={completion.percent} size={56} label="filled" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">
+            {completion.percent === 100
+              ? "Application complete"
+              : completion.canFinalise
+                ? "Ready to finalise"
+                : "Application in progress"}
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {completion.canFinalise
+              ? "All required fields are filled — you can finalise & export when ready."
+              : `Missing required: ${completion.missingRequired.join(", ")}`}
+          </div>
+        </div>
+      </div>
+
       {/* ───────── Client Details ───────── */}
       <Card title="Client Details">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -412,6 +512,33 @@ export function ApplicationForm({ products }: { products: Product[] }) {
             <Send size={14} />
           )}
           {busy === "submit" ? "Submitting…" : "Submit & Send Invoice"}
+        </button>
+
+        {/* Finalise & Export — gated on all required fields */}
+        <button
+          type="button"
+          onClick={handleFinalise}
+          disabled={busy !== "idle" || !completion.canFinalise}
+          title={
+            !completion.canFinalise
+              ? `Missing: ${completion.missingRequired.join(", ")}`
+              : "Generate the developer handoff PDF"
+          }
+          className={cn(
+            "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-all duration-150 active:scale-[0.97]",
+            completion.canFinalise && busy === "idle"
+              ? "bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow"
+              : "cursor-not-allowed bg-muted text-muted-foreground",
+          )}
+        >
+          {busy === "finalise" ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : completion.canFinalise ? (
+            <Download size={14} />
+          ) : (
+            <AlertCircle size={14} />
+          )}
+          {busy === "finalise" ? "Generating PDF…" : "Finalise & Export PDF"}
         </button>
       </div>
     </div>
