@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Kanban,
   Users,
+  ListTodo,
   Bot,
   CalendarDays,
   Settings,
@@ -16,12 +17,13 @@ import {
 } from "lucide-react";
 
 const NAV = [
-  { href: "/", label: "Home", icon: LayoutDashboard },
-  { href: "/pipeline", label: "Pipeline", icon: Kanban },
-  { href: "/clients", label: "Clients", icon: Users },
-  { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/",         label: "Home",     icon: LayoutDashboard },
+  { href: "/pipeline", label: "Pipeline", icon: Kanban          },
+  { href: "/clients",  label: "Clients",  icon: Users           },
+  { href: "/tasks",    label: "Tasks",    icon: ListTodo        },
+  { href: "/agents",   label: "Agents",   icon: Bot             },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays    },
+  { href: "/settings", label: "Settings", icon: Settings        },
 ] as const;
 
 export function Sidebar() {
