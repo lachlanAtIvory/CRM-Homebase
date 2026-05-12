@@ -45,7 +45,7 @@ export default async function ClientDetailPage({
       .limit(1),
     supabase
       .from("tasks")
-      .select("id, title, due_date, completed_at, created_at")
+      .select("id, title, due_date, due_time, completed_at, created_at")
       .eq("client_id", id)
       .order("created_at", { ascending: false }),
   ]);

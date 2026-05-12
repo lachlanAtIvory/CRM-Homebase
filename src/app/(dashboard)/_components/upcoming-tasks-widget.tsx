@@ -5,14 +5,26 @@ import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-AU", {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-AU", {
     day: "numeric", month: "short",
   });
 }
 
-function isOverdue(due: string | null, todayIso: string) {
+function formatTime(time: string) {
+  const [h, m] = time.split(":").map(Number);
+  const d = new Date();
+  d.setHours(h, m ?? 0, 0, 0);
+  return d.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+function isOverdue(due: string | null, dueTime: string | null, todayIso: string, now: Date) {
   if (!due) return false;
-  return due < todayIso;
+  if (due < todayIso) return true;
+  if (due > todayIso) return false;
+  // Same day — overdue only if due_time has passed
+  if (!dueTime) return false;
+  const [h, m] = dueTime.split(":").map(Number);
+  return now.getHours() > h || (now.getHours() === h && now.getMinutes() > (m ?? 0));
 }
 
 export async function UpcomingTasksWidget({ className }: { className?: string }) {
@@ -22,7 +34,7 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
   const [{ data: tasks }, { data: clients }] = await Promise.all([
     supabase
       .from("tasks")
-      .select("id, client_id, title, due_date")
+      .select("id, client_id, title, due_date, due_time")
       .is("completed_at", null)
       .order("due_date", { ascending: true, nullsFirst: false })
       .limit(8),
@@ -32,9 +44,10 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
   ]);
 
   const clientNameById = new Map((clients ?? []).map((c) => [c.id, c.company_name]));
-  const todayIso = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const todayIso = now.toISOString().split("T")[0];
 
-  const overdueCount = (tasks ?? []).filter((t) => isOverdue(t.due_date, todayIso)).length;
+  const overdueCount = (tasks ?? []).filter((t) => isOverdue(t.due_date, t.due_time, todayIso, now)).length;
 
   return (
     <Card className={className}>
@@ -67,8 +80,13 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
         ) : (
           <div className="space-y-2">
             {tasks.map((t) => {
-              const overdue = isOverdue(t.due_date, todayIso);
+              const overdue = isOverdue(t.due_date, t.due_time, todayIso, now);
               const clientName = clientNameById.get(t.client_id) ?? "—";
+              const dueLabel = t.due_date
+                ? t.due_time
+                  ? `${formatDate(t.due_date)} · ${formatTime(t.due_time)}`
+                  : formatDate(t.due_date)
+                : "";
               return (
                 <Link
                   key={t.id}
@@ -88,7 +106,7 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
                     <p className="truncate text-sm font-medium">{t.title}</p>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="truncate">{clientName}</span>
-                      {t.due_date && (
+                      {dueLabel && (
                         <>
                           <span>·</span>
                           <span
@@ -99,7 +117,7 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
                           >
                             <Clock size={10} />
                             {overdue ? "Overdue " : "Due "}
-                            {formatDate(t.due_date)}
+                            {dueLabel}
                           </span>
                         </>
                       )}

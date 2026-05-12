@@ -8,7 +8,7 @@ export default async function TasksPage() {
   const [{ data: tasks }, { data: clients }] = await Promise.all([
     supabase
       .from("tasks")
-      .select("id, client_id, title, due_date, completed_at, created_at")
+      .select("id, client_id, title, due_date, due_time, completed_at, created_at")
       .order("created_at", { ascending: false }),
     supabase
       .from("clients")
@@ -24,6 +24,7 @@ export default async function TasksPage() {
     client_name:  clientNameById.get(t.client_id) ?? "—",
     title:        t.title as string,
     due_date:     t.due_date as string | null,
+    due_time:     t.due_time as string | null,
     completed_at: t.completed_at as string | null,
     created_at:   t.created_at as string,
   }));

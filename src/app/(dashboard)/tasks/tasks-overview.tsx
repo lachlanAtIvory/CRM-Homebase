@@ -5,32 +5,23 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Circle, Clock, ListTodo } from "lucide-react";
+import { CheckCircle2, ListTodo } from "lucide-react";
+import {
+  OpenTaskRow,
+  isOverdue,
+  formatDateOnly,
+  type Task as BaseTask,
+} from "@/app/(dashboard)/clients/[id]/tasks-section";
 
-type Task = {
-  id:           string;
-  client_id:    string;
-  client_name:  string;
-  title:        string;
-  due_date:     string | null;
-  completed_at: string | null;
-  created_at:   string;
+type Task = BaseTask & {
+  client_id:   string;
+  client_name: string;
 };
-
-function isOverdue(task: Task) {
-  if (task.completed_at || !task.due_date) return false;
-  return new Date(task.due_date) < new Date(new Date().toDateString());
-}
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-AU", {
-    day: "numeric", month: "short", year: "numeric",
-  });
-}
 
 export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
   const [tasks,    setTasks]    = useState<Task[]>(initialTasks);
   const [showDone, setShowDone] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const { open, completed, overdueCount, currentCount } = useMemo(() => {
     const open      = tasks.filter((t) => !t.completed_at);
@@ -42,7 +33,6 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
 
   async function completeTask(id: string) {
     const now = new Date().toISOString();
-    // Optimistic update
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, completed_at: now } : t)),
     );
@@ -83,9 +73,28 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
     }
   }
 
+  async function saveTask(id: string, updates: Partial<Pick<Task, "title" | "due_date" | "due_time">>) {
+    const supabase = createClient();
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
+    const { error } = await supabase
+      .from("tasks")
+      .update({
+        title:    updates.title?.trim(),
+        due_date: updates.due_date || null,
+        due_time: updates.due_time || null,
+      })
+      .eq("id", id);
+    if (error) {
+      toast.error("Could not save changes");
+      return false;
+    }
+    toast.success("Task updated");
+    return true;
+  }
+
   return (
     <div className="space-y-6">
-      {/* ───────── Stats dots ───────── */}
+      {/* ───── Stats dots ───── */}
       <div className="flex flex-wrap items-stretch gap-3">
         <StatCard
           dotColor="bg-emerald-500"
@@ -100,7 +109,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
         />
       </div>
 
-      {/* ───────── Open tasks list ───────── */}
+      {/* ───── Open tasks list ───── */}
       <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
         <h2 className="mb-4 text-sm font-semibold">Open Tasks</h2>
 
@@ -113,68 +122,46 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
         ) : (
           <div className="space-y-2">
             {open
+              .slice()
               .sort((a, b) => {
-                // Overdue first, then by due date
+                // Overdue first, then by due date, then by due time
                 const aOver = isOverdue(a) ? 0 : 1;
                 const bOver = isOverdue(b) ? 0 : 1;
                 if (aOver !== bOver) return aOver - bOver;
                 if (!a.due_date) return 1;
                 if (!b.due_date) return -1;
-                return a.due_date.localeCompare(b.due_date);
+                const cmp = a.due_date.localeCompare(b.due_date);
+                if (cmp !== 0) return cmp;
+                if (!a.due_time) return 1;
+                if (!b.due_time) return -1;
+                return a.due_time.localeCompare(b.due_time);
               })
-              .map((task) => {
-                const overdue = isOverdue(task);
-                return (
-                  <div
-                    key={task.id}
-                    className={cn(
-                      "group flex items-start gap-3 rounded-lg border p-3 transition-all duration-150 hover:bg-muted/30",
-                      overdue && "border-destructive/40 bg-destructive/5",
-                    )}
-                  >
-                    <button
-                      onClick={() => completeTask(task.id)}
-                      className="mt-0.5 shrink-0 text-muted-foreground transition-all duration-150 hover:text-primary active:scale-90"
-                      title="Mark complete"
+              .map((task) => (
+                <OpenTaskRow
+                  key={task.id}
+                  task={task}
+                  editing={editingId === task.id}
+                  onStartEdit={() => setEditingId(task.id)}
+                  onCancelEdit={() => setEditingId(null)}
+                  onComplete={() => completeTask(task.id)}
+                  onSave={async (updates) => {
+                    const ok = await saveTask(task.id, updates);
+                    if (ok) setEditingId(null);
+                  }}
+                  leftSlot={
+                    <Link
+                      href={`/clients/${task.client_id}`}
+                      className="truncate text-xs text-muted-foreground transition-colors hover:text-primary hover:underline"
                     >
-                      <Circle size={16} />
-                    </button>
-
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm">{task.title}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                        <Link
-                          href={`/clients/${task.client_id}`}
-                          className="truncate text-xs text-muted-foreground transition-colors hover:text-primary hover:underline"
-                        >
-                          {task.client_name}
-                        </Link>
-                        {task.due_date && (
-                          <div className="flex items-center gap-1">
-                            <Clock
-                              size={11}
-                              className={overdue ? "text-destructive" : "text-muted-foreground"}
-                            />
-                            <span
-                              className={cn(
-                                "text-xs",
-                                overdue ? "font-medium text-destructive" : "text-muted-foreground",
-                              )}
-                            >
-                              {overdue ? "Overdue · " : "Due "}
-                              {formatDate(task.due_date)}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                      {task.client_name}
+                    </Link>
+                  }
+                />
+              ))}
           </div>
         )}
 
-        {/* ───────── Completed history ───────── */}
+        {/* ───── Completed history ───── */}
         {completed.length > 0 && (
           <div className="mt-5 border-t pt-4">
             <button
@@ -186,6 +173,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
             {showDone && (
               <div className="mt-2 space-y-2">
                 {completed
+                  .slice()
                   .sort((a, b) =>
                     (b.completed_at ?? "").localeCompare(a.completed_at ?? ""),
                   )
@@ -212,7 +200,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
                           </Link>
                           {task.completed_at && (
                             <span className="text-xs text-muted-foreground">
-                              Completed {formatDate(task.completed_at)}
+                              Completed {formatDateOnly(task.completed_at.split("T")[0])}
                             </span>
                           )}
                         </div>
@@ -228,9 +216,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
   );
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Stat card with coloured dot — top of the page
-// ───────────────────────────────────────────────────────────────────────────
+// ─── Stat card with coloured dot ────────────────────────────────────────────
 function StatCard({
   dotColor,
   label,
