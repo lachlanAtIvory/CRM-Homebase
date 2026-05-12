@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Send, Save } from "lucide-react";
+import { CheckCircle2, Send, Save, Loader2 } from "lucide-react";
 import { saveDraft, submitApplication, type ApplicationInput } from "./actions";
 
 type Product = {
@@ -46,7 +47,6 @@ export function ApplicationForm({ products }: { products: Product[] }) {
   const router = useRouter();
   const [v, setV] = useState<FormValues>(EMPTY);
   const [busy, setBusy] = useState<"idle" | "draft" | "submit">("idle");
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ id: string; invoiceSent: boolean } | null>(null);
 
   // Live quote totals
@@ -84,24 +84,43 @@ export function ApplicationForm({ products }: { products: Product[] }) {
   }
 
   async function handleSaveDraft() {
-    setError(null);
     setBusy("draft");
-    const result = await saveDraft(buildPayload());
+    const promise = saveDraft(buildPayload());
+
+    toast.promise(promise, {
+      loading: "Saving draft…",
+      success: (r) => (r.ok ? "Draft saved" : ""),
+      error:   "Something went wrong saving the draft.",
+    });
+
+    const result = await promise;
     setBusy("idle");
     if (!result.ok) {
-      setError(result.error);
+      toast.error(result.error);
       return;
     }
     setSuccess({ id: result.application_id, invoiceSent: false });
   }
 
   async function handleSubmit() {
-    setError(null);
     setBusy("submit");
-    const result = await submitApplication(buildPayload());
+    const promise = submitApplication(buildPayload());
+
+    toast.promise(promise, {
+      loading: "Submitting application and sending invoice…",
+      success: (r) =>
+        r.ok
+          ? r.invoice_sent
+            ? "✨ Application submitted — invoice emailed to client"
+            : "Application saved — invoice email failed (check Resend setup)"
+          : "",
+      error: "Something went wrong submitting the application.",
+    });
+
+    const result = await promise;
     setBusy("idle");
     if (!result.ok) {
-      setError(result.error);
+      toast.error(result.error);
       return;
     }
     setSuccess({ id: result.application_id, invoiceSent: result.invoice_sent });
@@ -187,10 +206,10 @@ export function ApplicationForm({ products }: { products: Product[] }) {
                 type="button"
                 onClick={() => toggleProduct(p.key)}
                 className={cn(
-                  "flex w-full items-center justify-between gap-4 rounded-lg border p-4 text-left transition-colors",
+                  "flex w-full items-center justify-between gap-4 rounded-lg border p-4 text-left transition-all duration-150 active:scale-[0.99]",
                   active
-                    ? "border-primary/40 bg-primary/5"
-                    : "border-border bg-background hover:bg-muted/30",
+                    ? "border-primary/50 bg-primary/5 shadow-sm ring-1 ring-primary/20"
+                    : "border-border bg-background hover:border-foreground/20 hover:bg-muted/30",
                 )}
               >
                 <div className="flex min-w-0 items-start gap-3">
@@ -266,29 +285,31 @@ export function ApplicationForm({ products }: { products: Product[] }) {
       </Card>
 
       {/* ───────── Actions ───────── */}
-      {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
-
       <div className="flex flex-wrap items-center justify-end gap-3">
         <button
           type="button"
           onClick={handleSaveDraft}
           disabled={busy !== "idle" || !v.company_name.trim()}
-          className="inline-flex items-center gap-2 rounded-lg border bg-background px-4 py-2 text-sm font-medium hover:bg-muted/40 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg border bg-background px-4 py-2 text-sm font-medium transition-all duration-150 hover:bg-muted/40 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
         >
-          <Save size={14} />
+          {busy === "draft" ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <Save size={14} />
+          )}
           {busy === "draft" ? "Saving…" : "Save Draft"}
         </button>
         <button
           type="button"
           onClick={handleSubmit}
           disabled={busy !== "idle" || !v.company_name.trim()}
-          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
         >
-          <Send size={14} />
+          {busy === "submit" ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <Send size={14} />
+          )}
           {busy === "submit" ? "Submitting…" : "Submit & Send Invoice"}
         </button>
       </div>
@@ -381,9 +402,9 @@ function Row({
 
 function SuccessPanel({ invoiceSent, onNew }: { invoiceSent: boolean; onNew: () => void }) {
   return (
-    <div className="rounded-xl border bg-card p-8 text-center ring-1 ring-foreground/5">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
-        <CheckCircle2 size={24} />
+    <div className="rounded-xl border bg-card p-8 text-center ring-1 ring-foreground/5 animate-in fade-in zoom-in-95 duration-300">
+      <div className="mx-auto mb-4 flex h-14 w-14 animate-in zoom-in-50 duration-500 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 ring-4 ring-emerald-500/5">
+        <CheckCircle2 size={28} />
       </div>
       <h2 className="text-lg font-semibold">Application saved</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -395,13 +416,13 @@ function SuccessPanel({ invoiceSent, onNew }: { invoiceSent: boolean; onNew: () 
         <button
           type="button"
           onClick={onNew}
-          className="rounded-lg border bg-background px-4 py-2 text-sm font-medium hover:bg-muted/40"
+          className="rounded-lg border bg-background px-4 py-2 text-sm font-medium transition-all duration-150 hover:bg-muted/40 active:scale-[0.97]"
         >
           New Application
         </button>
         <a
           href="/clients"
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow active:scale-[0.97]"
         >
           View Clients
         </a>

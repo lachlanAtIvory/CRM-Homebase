@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -70,8 +72,10 @@ export function ClientForm({
     setSaving(false);
     if (err) {
       setError("Failed to save — please try again.");
+      toast.error("Save failed", { description: "Please try again." });
     } else {
       setSaved(true);
+      toast.success("Changes saved");
     }
   }
 
@@ -137,10 +141,10 @@ export function ClientForm({
                 key={tool.id}
                 onClick={() => toggleTool(tool.id)}
                 className={cn(
-                  "rounded-lg border px-3 py-2.5 text-left text-xs font-medium transition-colors",
+                  "rounded-lg border px-3 py-2.5 text-left text-xs font-medium transition-all duration-150 active:scale-[0.97]",
                   active
-                    ? "border-primary/40 bg-primary/10 text-primary"
-                    : "border-border bg-background text-muted-foreground hover:text-foreground",
+                    ? "border-primary/50 bg-primary/10 text-primary shadow-sm"
+                    : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted/30 hover:text-foreground",
                 )}
               >
                 {tool.label}
@@ -155,12 +159,15 @@ export function ClientForm({
         <button
           onClick={handleSave}
           disabled={saving}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
         >
+          {saving && <Loader2 size={14} className="animate-spin" />}
           {saving ? "Saving…" : "Save Changes"}
         </button>
-        {saved && (
-          <span className="text-xs text-emerald-600">Saved ✓</span>
+        {saved && !saving && (
+          <span className="text-xs text-emerald-600 animate-in fade-in slide-in-from-left-1 duration-300">
+            Saved ✓
+          </span>
         )}
         {error && (
           <span className="text-xs text-destructive">{error}</span>

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Circle, Clock, Plus } from "lucide-react";
+import { CheckCircle2, Circle, Clock, Plus, Loader2 } from "lucide-react";
 
 type Task = {
   id:           string;
@@ -58,33 +59,49 @@ export function TasksSection({
       setTasks((prev) => [data, ...prev]);
       setTitle("");
       setDueDate("");
+      toast.success("Task added");
+    } else {
+      toast.error("Could not add task");
     }
   }
 
   async function completeTask(id: string) {
     const supabase = createClient();
     const now = new Date().toISOString();
+    // Optimistic update — flip state first, revert on error
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, completed_at: now } : t)),
+    );
     const { error } = await supabase
       .from("tasks")
       .update({ completed_at: now })
       .eq("id", id);
-    if (!error) {
+    if (error) {
       setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, completed_at: now } : t)),
+        prev.map((t) => (t.id === id ? { ...t, completed_at: null } : t)),
       );
+      toast.error("Could not complete task");
+    } else {
+      toast.success("Task completed 🎉");
     }
   }
 
   async function reopenTask(id: string) {
     const supabase = createClient();
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, completed_at: null } : t)),
+    );
     const { error } = await supabase
       .from("tasks")
       .update({ completed_at: null })
       .eq("id", id);
-    if (!error) {
+    if (error) {
+      // revert
+      const now = new Date().toISOString();
       setTasks((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, completed_at: null } : t)),
+        prev.map((t) => (t.id === id ? { ...t, completed_at: now } : t)),
       );
+      toast.error("Could not reopen task");
     }
   }
 
@@ -111,9 +128,9 @@ export function TasksSection({
         <button
           onClick={addTask}
           disabled={adding || !title.trim()}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow active:scale-[0.95] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
         >
-          <Plus size={14} />
+          {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
           Add
         </button>
       </div>
@@ -137,13 +154,14 @@ export function TasksSection({
                 <div
                   key={task.id}
                   className={cn(
-                    "flex items-start gap-3 rounded-lg border p-3",
+                    "flex items-start gap-3 rounded-lg border p-3 transition-colors animate-in fade-in slide-in-from-top-1 duration-200",
                     overdue && "border-destructive/40 bg-destructive/5",
                   )}
                 >
                   <button
                     onClick={() => completeTask(task.id)}
-                    className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary"
+                    className="mt-0.5 shrink-0 text-muted-foreground transition-all duration-150 hover:text-primary active:scale-90"
+                    title="Mark complete"
                   >
                     <Circle size={16} />
                   </button>
@@ -195,7 +213,7 @@ export function TasksSection({
                   >
                     <button
                       onClick={() => reopenTask(task.id)}
-                      className="mt-0.5 shrink-0 text-primary"
+                      className="mt-0.5 shrink-0 text-primary transition-transform duration-150 hover:scale-110 active:scale-90"
                       title="Reopen task"
                     >
                       <CheckCircle2 size={16} />

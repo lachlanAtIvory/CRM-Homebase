@@ -82,7 +82,7 @@ export default async function PipelinePage() {
                     const value   = fmtAud(deal.deal_value_aud);
 
                     const card = (
-                      <div className="rounded-lg border bg-background p-3 shadow-sm transition-colors hover:bg-muted/40">
+                      <div className="rounded-lg border bg-background p-3 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-foreground/15 hover:bg-muted/30 hover:shadow-md active:scale-[0.98]">
                         <div className="flex items-start gap-2">
                           {overdue && (
                             <span

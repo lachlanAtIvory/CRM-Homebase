@@ -82,7 +82,7 @@ export default async function ClientsPage() {
             <Link
               key={client.id}
               href={`/clients/${client.id}`}
-              className="grid grid-cols-5 items-center px-4 py-3 text-sm transition-colors hover:bg-muted/50"
+              className="group grid grid-cols-5 items-center px-4 py-3 text-sm transition-all duration-150 hover:bg-muted/60 hover:shadow-[inset_3px_0_0_0_var(--primary)] active:bg-muted/80"
             >
               {/* Company */}
               <div className="flex items-center gap-2 font-medium">
