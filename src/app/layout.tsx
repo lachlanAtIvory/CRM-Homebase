@@ -30,14 +30,18 @@ export default function RootLayout({
 
         {children}
 
-        {/* Toast container — bottom-right, themed, nice slide-in */}
+        {/* Toast container — top-center, stays for 5s, can't be missed */}
         <Toaster
-          position="bottom-right"
+          position="top-center"
           richColors
           closeButton
+          expand
+          duration={5000}
           toastOptions={{
             classNames: {
-              toast: "shadow-lg ring-1 ring-foreground/5",
+              toast: "shadow-xl ring-1 ring-foreground/10",
+              title: "text-sm font-medium",
+              description: "text-xs",
             },
           }}
         />
