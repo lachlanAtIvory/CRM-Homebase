@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, ListTodo } from "lucide-react";
+import { CheckCircle2, ListTodo, Bell, BellRing, BellOff } from "lucide-react";
+import { playSuccessChime, unlockAudio } from "@/lib/sounds";
 import {
   OpenTaskRow,
   isOverdue,
@@ -32,6 +33,9 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
   }, [tasks]);
 
   async function completeTask(id: string) {
+    unlockAudio();
+    playSuccessChime();
+
     const now = new Date().toISOString();
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, completed_at: now } : t)),
@@ -94,7 +98,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
 
   return (
     <div className="space-y-6">
-      {/* ───── Stats dots ───── */}
+      {/* ───── Stats dots + notification toggle ───── */}
       <div className="flex flex-wrap items-stretch gap-3">
         <StatCard
           dotColor="bg-emerald-500"
@@ -107,6 +111,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
           count={overdueCount}
           urgent={overdueCount > 0}
         />
+        <NotificationToggle />
       </div>
 
       {/* ───── Open tasks list ───── */}
@@ -213,6 +218,99 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Browser-notification opt-in card ───────────────────────────────────────
+function NotificationToggle() {
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("Notification" in window)) {
+      setPermission("unsupported");
+      return;
+    }
+    setPermission(Notification.permission);
+  }, []);
+
+  async function enable() {
+    if (permission !== "default") return;
+    unlockAudio(); // also unlock audio for reminder dings
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    if (result === "granted") {
+      toast.success("Browser reminders enabled", {
+        description: "You'll get a desktop notification 10 min before each task is due.",
+      });
+      // Test notification so they know it works
+      try {
+        new Notification("Reminders enabled ✓", {
+          body: "Agent Ivory will alert you 10 min before tasks are due.",
+          icon: "/favicon.ico",
+        });
+      } catch { /* noop */ }
+    } else if (result === "denied") {
+      toast.error("Reminders blocked", {
+        description: "Enable notifications for this site in your browser settings.",
+      });
+    }
+  }
+
+  if (permission === "unsupported") return null;
+
+  const config = {
+    default: {
+      icon: Bell,
+      title: "Enable reminders",
+      sub:   "Click for desktop alerts 10 min before due",
+      onClick: enable,
+      ring: "",
+    },
+    granted: {
+      icon: BellRing,
+      title: "Reminders on",
+      sub:   "Desktop alerts 10 min before each due time",
+      onClick: undefined,
+      ring: "ring-primary/20",
+    },
+    denied: {
+      icon: BellOff,
+      title: "Reminders blocked",
+      sub:   "Enable in browser settings",
+      onClick: undefined,
+      ring: "ring-destructive/20",
+    },
+  } as const;
+
+  const c = config[permission as keyof typeof config];
+  const Icon = c.icon;
+
+  return (
+    <button
+      type="button"
+      onClick={c.onClick}
+      disabled={!c.onClick}
+      className={cn(
+        "flex min-w-[200px] flex-1 items-center gap-3 rounded-xl border bg-card p-4 text-left ring-1 ring-foreground/5 transition-all duration-150",
+        "sm:flex-none",
+        c.ring,
+        c.onClick && "hover:bg-muted/30 active:scale-[0.98] cursor-pointer",
+      )}
+    >
+      <span className={cn(
+        "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+        permission === "granted"  ? "bg-primary/10 text-primary"
+        : permission === "denied" ? "bg-destructive/10 text-destructive"
+                                  : "bg-muted text-muted-foreground",
+      )}>
+        <Icon size={16} />
+      </span>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold leading-tight">{c.title}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{c.sub}</div>
+      </div>
+    </button>
   );
 }
 

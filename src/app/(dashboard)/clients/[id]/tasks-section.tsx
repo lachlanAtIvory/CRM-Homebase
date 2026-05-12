@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Circle, Clock, Plus, Loader2, Pencil, X, Save } from "lucide-react";
+import { playSuccessChime, unlockAudio } from "@/lib/sounds";
 
 export type Task = {
   id:           string;
@@ -97,6 +98,9 @@ export function TasksSection({
   }
 
   async function completeTask(id: string) {
+    unlockAudio();           // satisfy autoplay policy for future reminder dings
+    playSuccessChime();      // immediate satisfying sound on click
+
     const supabase = createClient();
     const now = new Date().toISOString();
     setTasks((prev) =>

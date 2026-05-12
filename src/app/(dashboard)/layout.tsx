@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { TaskReminderManager } from "./_components/task-reminder-manager";
 
 export default async function DashboardLayout({
   children,
@@ -24,6 +25,9 @@ export default async function DashboardLayout({
           {children}
         </main>
       </div>
+
+      {/* Background — polls open tasks, fires reminders 10 min before due time */}
+      <TaskReminderManager />
     </div>
   );
 }
