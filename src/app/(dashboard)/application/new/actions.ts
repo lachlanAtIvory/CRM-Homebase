@@ -5,6 +5,16 @@ import { createClient } from "@/lib/supabase/server";
 import { resend, FROM_EMAIL, COMPANY_NAME } from "@/lib/resend";
 import { renderInvoiceHTML, type InvoiceData } from "@/lib/invoice-template";
 
+export type TeamMember = {
+  name:                  string;
+  position:              string;
+  services:              string;
+  // When uses_single_calendar = true → optional separate calendar on top
+  has_separate_calendar?: boolean;
+  // When uses_single_calendar = false → integrate this person's calendar into the agent?
+  integrate_calendar?:   boolean;
+};
+
 export type ApplicationInput = {
   // Client Details
   company_name:     string;
@@ -14,6 +24,9 @@ export type ApplicationInput = {
   // Business
   abn:              string;
   trading_address:  string;
+  // Team & calendars
+  uses_single_calendar: boolean | null;
+  team_members:         TeamMember[];
   // Products
   selected_products: string[]; // product keys
   // Quote totals (snapshot)
@@ -40,17 +53,19 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
   const { data, error } = await supabase
     .from("applications")
     .insert({
-      company_name:      input.company_name.trim(),
-      owner_name:        input.owner_name.trim()      || null,
-      contact_email:     input.contact_email.trim()   || null,
-      contact_phone:     input.contact_phone.trim()   || null,
-      abn:               input.abn.trim()             || null,
-      trading_address:   input.trading_address.trim() || null,
-      selected_products: input.selected_products,
-      upfront_total_aud: input.upfront_total_aud,
-      monthly_total_aud: input.monthly_total_aud,
-      goals:             input.goals.trim()        || null,
-      requirements:      input.requirements.trim() || null,
+      company_name:         input.company_name.trim(),
+      owner_name:           input.owner_name.trim()      || null,
+      contact_email:        input.contact_email.trim()   || null,
+      contact_phone:        input.contact_phone.trim()   || null,
+      abn:                  input.abn.trim()             || null,
+      trading_address:      input.trading_address.trim() || null,
+      uses_single_calendar: input.uses_single_calendar,
+      team_members:         input.team_members,
+      selected_products:    input.selected_products,
+      upfront_total_aud:    input.upfront_total_aud,
+      monthly_total_aud:    input.monthly_total_aud,
+      goals:                input.goals.trim()        || null,
+      requirements:         input.requirements.trim() || null,
       status:            "draft",
     })
     .select("id")
@@ -77,17 +92,19 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
   const { data: app, error: appErr } = await supabase
     .from("applications")
     .insert({
-      company_name:      input.company_name.trim(),
-      owner_name:        input.owner_name.trim()      || null,
-      contact_email:     input.contact_email.trim()   || null,
-      contact_phone:     input.contact_phone.trim()   || null,
-      abn:               input.abn.trim()             || null,
-      trading_address:   input.trading_address.trim() || null,
-      selected_products: input.selected_products,
-      upfront_total_aud: input.upfront_total_aud,
-      monthly_total_aud: input.monthly_total_aud,
-      goals:             input.goals.trim()        || null,
-      requirements:      input.requirements.trim() || null,
+      company_name:         input.company_name.trim(),
+      owner_name:           input.owner_name.trim()      || null,
+      contact_email:        input.contact_email.trim()   || null,
+      contact_phone:        input.contact_phone.trim()   || null,
+      abn:                  input.abn.trim()             || null,
+      trading_address:      input.trading_address.trim() || null,
+      uses_single_calendar: input.uses_single_calendar,
+      team_members:         input.team_members,
+      selected_products:    input.selected_products,
+      upfront_total_aud:    input.upfront_total_aud,
+      monthly_total_aud:    input.monthly_total_aud,
+      goals:                input.goals.trim()        || null,
+      requirements:         input.requirements.trim() || null,
       status:            "submitted",
     })
     .select("id")

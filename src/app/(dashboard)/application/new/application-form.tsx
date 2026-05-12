@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Send, Save, Loader2 } from "lucide-react";
-import { saveDraft, submitApplication, type ApplicationInput } from "./actions";
+import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays } from "lucide-react";
+import { saveDraft, submitApplication, type ApplicationInput, type TeamMember } from "./actions";
 
 type Product = {
   key:              string;
@@ -22,6 +22,8 @@ type FormValues = {
   contact_phone:    string;
   abn:              string;
   trading_address:  string;
+  uses_single_calendar: boolean | null;
+  team_members:         TeamMember[];
   selected_products: string[];
   goals:            string;
   requirements:     string;
@@ -34,9 +36,17 @@ const EMPTY: FormValues = {
   contact_phone:     "",
   abn:               "",
   trading_address:   "",
+  uses_single_calendar: null,
+  team_members:        [],
   selected_products: [],
   goals:             "",
   requirements:      "",
+};
+
+const EMPTY_MEMBER: TeamMember = {
+  name:     "",
+  position: "",
+  services: "",
 };
 
 function fmtAud(v: number) {
@@ -72,6 +82,27 @@ export function ApplicationForm({ products }: { products: Product[] }) {
       selected_products: prev.selected_products.includes(key)
         ? prev.selected_products.filter((k) => k !== key)
         : [...prev.selected_products, key],
+    }));
+  }
+
+  function addTeamMember() {
+    setV((prev) => ({
+      ...prev,
+      team_members: [...prev.team_members, { ...EMPTY_MEMBER }],
+    }));
+  }
+
+  function removeTeamMember(idx: number) {
+    setV((prev) => ({
+      ...prev,
+      team_members: prev.team_members.filter((_, i) => i !== idx),
+    }));
+  }
+
+  function updateTeamMember(idx: number, patch: Partial<TeamMember>) {
+    setV((prev) => ({
+      ...prev,
+      team_members: prev.team_members.map((m, i) => (i === idx ? { ...m, ...patch } : m)),
     }));
   }
 
@@ -189,6 +220,76 @@ export function ApplicationForm({ products }: { products: Product[] }) {
             placeholder="Street, suburb, state, postcode"
           />
         </div>
+      </Card>
+
+      {/* ───────── Team & Specialists ───────── */}
+      <Card title="Team & Specialists">
+        <p className="mb-4 text-xs text-muted-foreground">
+          Add the people the AI will represent or hand off to. The calendar
+          settings tell the developer how to wire bookings.
+        </p>
+
+        {/* Single-calendar question */}
+        <div className="mb-4 rounded-lg border bg-muted/30 p-3">
+          <p className="mb-2 text-xs font-medium">
+            Does the business use one shared calendar?
+          </p>
+          <div className="flex gap-2">
+            <YesNoButton
+              active={v.uses_single_calendar === true}
+              label="Yes — one shared calendar"
+              onClick={() => set("uses_single_calendar", true)}
+            />
+            <YesNoButton
+              active={v.uses_single_calendar === false}
+              label="No — separate calendars"
+              onClick={() => set("uses_single_calendar", false)}
+            />
+          </div>
+          {v.uses_single_calendar === true && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Per-person calendar details are optional — add them below only if any
+              team member also has a separate calendar.
+            </p>
+          )}
+          {v.uses_single_calendar === false && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              For each team member below, indicate whether to integrate their
+              calendar into the agent.
+            </p>
+          )}
+        </div>
+
+        {/* Team member list */}
+        {v.team_members.length === 0 ? (
+          <div className="rounded-lg border border-dashed bg-background p-6 text-center">
+            <p className="text-sm text-muted-foreground">No team members added yet</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Add specialists, sales staff, or anyone the AI will route calls to.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {v.team_members.map((member, idx) => (
+              <TeamMemberCard
+                key={idx}
+                member={member}
+                singleCalendar={v.uses_single_calendar}
+                onChange={(patch) => updateTeamMember(idx, patch)}
+                onRemove={() => removeTeamMember(idx)}
+              />
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={addTeamMember}
+          className="mt-4 inline-flex items-center gap-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary transition-all duration-150 hover:border-primary/60 hover:bg-primary/10 active:scale-[0.97]"
+        >
+          <UserPlus size={14} />
+          Add team member
+        </button>
       </Card>
 
       {/* ───────── Product Details ───────── */}
@@ -396,6 +497,115 @@ function Row({
       )}>
         {value}
       </span>
+    </div>
+  );
+}
+
+function YesNoButton({
+  active, label, onClick,
+}: {
+  active:  boolean;
+  label:   string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-all duration-150 active:scale-[0.97]",
+        active
+          ? "border-primary/50 bg-primary text-primary-foreground shadow-sm"
+          : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted/40 hover:text-foreground",
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function TeamMemberCard({
+  member, singleCalendar, onChange, onRemove,
+}: {
+  member:         TeamMember;
+  singleCalendar: boolean | null;
+  onChange:       (patch: Partial<TeamMember>) => void;
+  onRemove:       () => void;
+}) {
+  return (
+    <div className="rounded-lg border bg-background p-4 ring-1 ring-foreground/5 animate-in fade-in slide-in-from-top-1 duration-200">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field
+          label="Name"
+          value={member.name}
+          onChange={(s) => onChange({ name: s })}
+          placeholder="e.g. Sarah Jones"
+        />
+        <Field
+          label="Position"
+          value={member.position}
+          onChange={(s) => onChange({ position: s })}
+          placeholder="e.g. Lead Specialist"
+        />
+        <Field
+          label="Services Offered"
+          value={member.services}
+          onChange={(s) => onChange({ services: s })}
+          placeholder="e.g. Consults, demos"
+        />
+      </div>
+
+      {/* Calendar section — depends on top-level single-calendar choice */}
+      {singleCalendar !== null && (
+        <div className="mt-3 rounded-md border bg-muted/30 p-3">
+          <div className="mb-2 flex items-center gap-2 text-xs font-medium">
+            <CalendarDays size={12} />
+            Calendar
+          </div>
+
+          {singleCalendar === true ? (
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={member.has_separate_calendar ?? false}
+                onChange={(e) => onChange({ has_separate_calendar: e.target.checked })}
+                className="h-3.5 w-3.5 cursor-pointer accent-primary"
+              />
+              Also has their own separate calendar
+            </label>
+          ) : (
+            <div>
+              <p className="mb-1.5 text-xs text-muted-foreground">
+                Integrate this person&apos;s calendar into the agent?
+              </p>
+              <div className="flex gap-2">
+                <YesNoButton
+                  active={member.integrate_calendar === true}
+                  label="Yes"
+                  onClick={() => onChange({ integrate_calendar: true })}
+                />
+                <YesNoButton
+                  active={member.integrate_calendar === false}
+                  label="No"
+                  onClick={() => onChange({ integrate_calendar: false })}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={onRemove}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          title="Remove team member"
+        >
+          <Trash2 size={12} />
+          Remove
+        </button>
+      </div>
     </div>
   );
 }
