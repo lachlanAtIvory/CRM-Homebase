@@ -80,7 +80,7 @@ export default async function ClientDetailPage({
             {STAGE_LABELS[deal.current_stage] ?? deal.current_stage}
           </span>
           {deal.deal_value_aud && (
-            <span className="text-sm font-semibold text-emerald-600">
+            <span className="text-sm font-semibold text-primary">
               ${deal.deal_value_aud.toLocaleString("en-AU")} AUD
             </span>
           )}

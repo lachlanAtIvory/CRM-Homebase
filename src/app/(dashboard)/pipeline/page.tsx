@@ -100,7 +100,7 @@ export default async function PipelinePage() {
                               </p>
                             )}
                             {value && (
-                              <p className="mt-1.5 text-xs font-semibold text-emerald-600">
+                              <p className="mt-1.5 text-xs font-semibold text-primary">
                                 {value}
                               </p>
                             )}

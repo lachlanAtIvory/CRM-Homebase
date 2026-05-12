@@ -403,7 +403,7 @@ function Row({
 function SuccessPanel({ invoiceSent, onNew }: { invoiceSent: boolean; onNew: () => void }) {
   return (
     <div className="rounded-xl border bg-card p-8 text-center ring-1 ring-foreground/5 animate-in fade-in zoom-in-95 duration-300">
-      <div className="mx-auto mb-4 flex h-14 w-14 animate-in zoom-in-50 duration-500 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 ring-4 ring-emerald-500/5">
+      <div className="mx-auto mb-4 flex h-14 w-14 animate-in zoom-in-50 duration-500 items-center justify-center rounded-full bg-primary/10 text-primary ring-4 ring-primary/5">
         <CheckCircle2 size={28} />
       </div>
       <h2 className="text-lg font-semibold">Application saved</h2>

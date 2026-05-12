@@ -165,7 +165,7 @@ export function ClientForm({
           {saving ? "Saving…" : "Save Changes"}
         </button>
         {saved && !saving && (
-          <span className="text-xs text-emerald-600 animate-in fade-in slide-in-from-left-1 duration-300">
+          <span className="text-xs text-primary animate-in fade-in slide-in-from-left-1 duration-300">
             Saved ✓
           </span>
         )}

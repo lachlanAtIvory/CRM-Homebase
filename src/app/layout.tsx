@@ -22,10 +22,10 @@ export default function RootLayout({
       <body className="antialiased">
         {/* Top progress bar — fires on every Next.js navigation */}
         <NextTopLoader
-          color="#10b981"
+          color="#6c4bf1"
           height={3}
           showSpinner={false}
-          shadow="0 0 10px #10b981,0 0 5px #10b981"
+          shadow="0 0 10px #6c4bf1,0 0 5px #6c4bf1"
         />
 
         {children}
