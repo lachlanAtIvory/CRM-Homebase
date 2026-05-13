@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays, Download, AlertCircle } from "lucide-react";
-import { saveDraft, submitApplication, type ApplicationInput, type TeamMember } from "./actions";
+import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays, Download, AlertCircle, Briefcase, Plus, CalendarClock } from "lucide-react";
+import { saveDraft, submitApplication, type ApplicationInput, type TeamMember, type Service } from "./actions";
 import { computeCompletion } from "./completion";
 import { CompletionRing } from "./completion-ring";
 
@@ -24,8 +24,12 @@ type FormValues = {
   contact_phone:    string;
   abn:              string;
   trading_address:  string;
+  services:             Service[];
   uses_single_calendar: boolean | null;
   team_members:         TeamMember[];
+  booking_platform_name:  string;
+  booking_platform_url:   string;
+  booking_platform_notes: string;
   selected_products: string[];
   goals:            string;
   requirements:     string;
@@ -38,18 +42,29 @@ const EMPTY: FormValues = {
   contact_phone:     "",
   abn:               "",
   trading_address:   "",
+  services:          [],
   uses_single_calendar: null,
   team_members:        [],
+  booking_platform_name:  "",
+  booking_platform_url:   "",
+  booking_platform_notes: "",
   selected_products: [],
   goals:             "",
   requirements:      "",
 };
 
 const EMPTY_MEMBER: TeamMember = {
-  name:     "",
-  position: "",
-  services: "",
+  name:           "",
+  position:       "",
+  service_ids:    [],
+  other_services: "",
 };
+
+function newServiceId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `svc_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
 
 function fmtAud(v: number) {
   return `$${v.toLocaleString("en-AU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -99,6 +114,36 @@ export function ApplicationForm({
         ? prev.selected_products.filter((k) => k !== key)
         : [...prev.selected_products, key],
     }));
+  }
+
+  function addService() {
+    setV((prev) => ({
+      ...prev,
+      services: [...prev.services, { id: newServiceId(), name: "" }],
+    }));
+  }
+
+  function updateService(idx: number, name: string) {
+    setV((prev) => ({
+      ...prev,
+      services: prev.services.map((s, i) => (i === idx ? { ...s, name } : s)),
+    }));
+  }
+
+  function removeService(idx: number) {
+    setV((prev) => {
+      const removed = prev.services[idx];
+      const removedId = removed?.id;
+      return {
+        ...prev,
+        services: prev.services.filter((_, i) => i !== idx),
+        // Cascade: also strip this service id from every team member
+        team_members: prev.team_members.map((m) => ({
+          ...m,
+          service_ids: (m.service_ids ?? []).filter((id) => id !== removedId),
+        })),
+      };
+    });
   }
 
   function addTeamMember() {
@@ -215,20 +260,24 @@ export function ApplicationForm({
       const blob = await pdf(
         <ApplicationPDF
           data={{
-            company_name:        v.company_name,
-            owner_name:          v.owner_name,
-            contact_email:       v.contact_email,
-            contact_phone:       v.contact_phone,
-            abn:                 v.abn,
-            trading_address:     v.trading_address,
-            uses_single_calendar: v.uses_single_calendar,
-            team_members:        v.team_members,
-            selected_products:   selectedProducts,
-            upfront_total_aud:   upfrontTotal,
-            monthly_total_aud:   monthlyTotal,
-            goals:               v.goals,
-            requirements:        v.requirements,
-            generated_at:        new Date().toLocaleDateString("en-AU", {
+            company_name:           v.company_name,
+            owner_name:             v.owner_name,
+            contact_email:          v.contact_email,
+            contact_phone:          v.contact_phone,
+            abn:                    v.abn,
+            trading_address:        v.trading_address,
+            services:               v.services,
+            uses_single_calendar:   v.uses_single_calendar,
+            team_members:           v.team_members,
+            booking_platform_name:  v.booking_platform_name,
+            booking_platform_url:   v.booking_platform_url,
+            booking_platform_notes: v.booking_platform_notes,
+            selected_products:      selectedProducts,
+            upfront_total_aud:      upfrontTotal,
+            monthly_total_aud:      monthlyTotal,
+            goals:                  v.goals,
+            requirements:           v.requirements,
+            generated_at:           new Date().toLocaleDateString("en-AU", {
               day: "numeric", month: "long", year: "numeric",
             }),
           }}
@@ -342,6 +391,59 @@ export function ApplicationForm({
         </div>
       </Card>
 
+      {/* ───────── Services ───────── */}
+      <Card title="Services">
+        <p className="mb-4 text-xs text-muted-foreground">
+          List every service the business offers. You&apos;ll assign these to team
+          members in the next section.
+        </p>
+
+        {v.services.length === 0 ? (
+          <div className="rounded-lg border border-dashed bg-background p-5 text-center">
+            <Briefcase size={22} className="mx-auto opacity-30" />
+            <p className="mt-2 text-sm text-muted-foreground">No services added yet</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              e.g. Consultation, Discovery Call, Treatment, Onboarding…
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {v.services.map((svc, idx) => (
+              <div
+                key={svc.id}
+                className="flex items-center gap-2 rounded-lg border bg-background p-2 animate-in fade-in slide-in-from-top-1 duration-200"
+              >
+                <input
+                  type="text"
+                  value={svc.name}
+                  onChange={(e) => updateService(idx, e.target.value)}
+                  placeholder="Service name…"
+                  className="min-w-0 flex-1 rounded-md border-0 bg-transparent px-2 py-1 text-sm outline-none focus:bg-background focus:ring-1 focus:ring-primary/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeService(idx)}
+                  className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  title="Remove service"
+                  aria-label="Remove service"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={addService}
+          className="mt-4 inline-flex items-center gap-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2 text-sm font-medium text-primary transition-all duration-150 hover:border-primary/60 hover:bg-primary/10 active:scale-[0.97]"
+        >
+          <Plus size={14} />
+          Add service
+        </button>
+      </Card>
+
       {/* ───────── Team & Specialists ───────── */}
       <Card title="Team & Specialists">
         <p className="mb-4 text-xs text-muted-foreground">
@@ -394,6 +496,7 @@ export function ApplicationForm({
               <TeamMemberCard
                 key={idx}
                 member={member}
+                services={v.services}
                 singleCalendar={v.uses_single_calendar}
                 onChange={(patch) => updateTeamMember(idx, patch)}
                 onRemove={() => removeTeamMember(idx)}
@@ -410,6 +513,44 @@ export function ApplicationForm({
           <UserPlus size={14} />
           Add team member
         </button>
+      </Card>
+
+      {/* ───────── Booking Platform ───────── */}
+      <Card title="Booking Platform">
+        <p className="mb-4 flex items-start gap-2 text-xs text-muted-foreground">
+          <CalendarClock size={14} className="mt-0.5 shrink-0" />
+          <span>
+            Which booking system does the client currently use? Helps the developer
+            plan calendar sync, port-over, or replace.
+          </span>
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Platform name"
+            value={v.booking_platform_name}
+            onChange={(s) => set("booking_platform_name", s)}
+            placeholder="e.g. Calendly, Acuity, Fresha, Square…"
+          />
+          <Field
+            label="Account URL"
+            value={v.booking_platform_url}
+            onChange={(s) => set("booking_platform_url", s)}
+            placeholder="e.g. calendly.com/acme"
+            type="url"
+          />
+        </div>
+        <div className="mt-3">
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Notes
+          </label>
+          <textarea
+            value={v.booking_platform_notes}
+            onChange={(e) => set("booking_platform_notes", e.target.value)}
+            placeholder="Anything Sassle should know — login plan, integrations, what to keep / replace…"
+            rows={3}
+            className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
+          />
+        </div>
       </Card>
 
       {/* ───────── Product Details ───────── */}
@@ -672,16 +813,27 @@ function YesNoButton({
 }
 
 function TeamMemberCard({
-  member, singleCalendar, onChange, onRemove,
+  member, services, singleCalendar, onChange, onRemove,
 }: {
   member:         TeamMember;
+  services:       Service[];
   singleCalendar: boolean | null;
   onChange:       (patch: Partial<TeamMember>) => void;
   onRemove:       () => void;
 }) {
+  const selectedIds = member.service_ids ?? [];
+
+  function toggleService(id: string) {
+    onChange({
+      service_ids: selectedIds.includes(id)
+        ? selectedIds.filter((s) => s !== id)
+        : [...selectedIds, id],
+    });
+  }
+
   return (
     <div className="rounded-lg border bg-background p-4 ring-1 ring-foreground/5 animate-in fade-in slide-in-from-top-1 duration-200">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <Field
           label="Name"
           value={member.name}
@@ -694,12 +846,53 @@ function TeamMemberCard({
           onChange={(s) => onChange({ position: s })}
           placeholder="e.g. Lead Specialist"
         />
-        <Field
-          label="Services Offered"
-          value={member.services}
-          onChange={(s) => onChange({ services: s })}
-          placeholder="e.g. Consults, demos"
-        />
+      </div>
+
+      {/* Services this member performs — chips from the Services list above */}
+      <div className="mt-3">
+        <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+          Services performed
+        </label>
+        {services.length === 0 ? (
+          <p className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Add services to the Services section above to assign them here.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {services
+              .filter((s) => s.name.trim().length > 0)
+              .map((svc) => {
+                const active = selectedIds.includes(svc.id);
+                return (
+                  <button
+                    key={svc.id}
+                    type="button"
+                    onClick={() => toggleService(svc.id)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-xs font-medium transition-all duration-150 active:scale-[0.95]",
+                      active
+                        ? "border-primary/50 bg-primary text-primary-foreground shadow-sm"
+                        : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted/40 hover:text-foreground",
+                    )}
+                  >
+                    {svc.name}
+                  </button>
+                );
+              })}
+          </div>
+        )}
+        <div className="mt-2">
+          <label className="mb-1 block text-xs text-muted-foreground">
+            Other services (free-text)
+          </label>
+          <input
+            type="text"
+            value={member.other_services ?? ""}
+            onChange={(e) => onChange({ other_services: e.target.value })}
+            placeholder="e.g. Custom consultations, training…"
+            className="w-full rounded-md border bg-background px-2.5 py-1.5 text-xs outline-none ring-1 ring-transparent focus:ring-primary/40"
+          />
+        </div>
       </div>
 
       {/* Calendar section — depends on top-level single-calendar choice */}

@@ -1,7 +1,7 @@
 "use client";
 
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
-import type { TeamMember } from "./actions";
+import type { TeamMember, Service } from "./actions";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 export type PdfProduct = {
@@ -20,9 +20,15 @@ export type PdfData = {
   // Business
   abn:             string;
   trading_address: string;
+  // Services offered
+  services:        Service[];
   // Team
   uses_single_calendar: boolean | null;
   team_members:        TeamMember[];
+  // Booking platform
+  booking_platform_name:  string;
+  booking_platform_url:   string;
+  booking_platform_notes: string;
   // Products (full info, not just keys)
   selected_products:  PdfProduct[];
   upfront_total_aud:  number;
@@ -265,6 +271,21 @@ export function ApplicationPDF({ data }: { data: PdfData }) {
           {row("Trading Address", data.trading_address)}
         </View>
 
+        {/* Services offered */}
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>Services Offered</Text>
+          {data.services.filter((sv) => sv.name.trim().length > 0).length === 0 ? (
+            <Text style={s.paraEmpty}>No services listed.</Text>
+          ) : (
+            <Text style={s.para}>
+              {data.services
+                .filter((sv) => sv.name.trim().length > 0)
+                .map((sv) => sv.name.trim())
+                .join(" · ")}
+            </Text>
+          )}
+        </View>
+
         {/* Team & Calendars */}
         <View style={s.section}>
           <Text style={s.sectionTitle}>Team &amp; Calendars</Text>
@@ -279,24 +300,52 @@ export function ApplicationPDF({ data }: { data: PdfData }) {
           ) : (
             data.team_members
               .filter((m) => m.name.trim().length > 0)
-              .map((m, i) => (
-                <View key={i} style={s.teamCard}>
-                  <Text style={s.teamName}>
-                    {m.name}{m.position ? ` — ${m.position}` : ""}
-                  </Text>
-                  {m.services && (
-                    <Text style={s.teamMeta}>Services: {m.services}</Text>
-                  )}
-                  {data.uses_single_calendar === true && m.has_separate_calendar && (
-                    <Text style={s.teamMeta}>Also has separate calendar</Text>
-                  )}
-                  {data.uses_single_calendar === false && m.integrate_calendar !== undefined && (
-                    <Text style={s.teamMeta}>
-                      Integrate calendar into agent: {m.integrate_calendar ? "Yes" : "No"}
+              .map((m, i) => {
+                // Resolve service_ids → names using the top-level services list
+                const memberServiceNames = (m.service_ids ?? [])
+                  .map((id) => data.services.find((sv) => sv.id === id)?.name)
+                  .filter((n): n is string => !!n && n.trim().length > 0);
+                const otherServices = m.other_services?.trim();
+                const serviceLine = [
+                  memberServiceNames.join(", "),
+                  otherServices ? `Other: ${otherServices}` : "",
+                ].filter(Boolean).join(" · ");
+
+                return (
+                  <View key={i} style={s.teamCard}>
+                    <Text style={s.teamName}>
+                      {m.name}{m.position ? ` — ${m.position}` : ""}
                     </Text>
-                  )}
-                </View>
-              ))
+                    {serviceLine && (
+                      <Text style={s.teamMeta}>Services: {serviceLine}</Text>
+                    )}
+                    {data.uses_single_calendar === true && m.has_separate_calendar && (
+                      <Text style={s.teamMeta}>Also has separate calendar</Text>
+                    )}
+                    {data.uses_single_calendar === false && m.integrate_calendar !== undefined && (
+                      <Text style={s.teamMeta}>
+                        Integrate calendar into agent: {m.integrate_calendar ? "Yes" : "No"}
+                      </Text>
+                    )}
+                  </View>
+                );
+              })
+          )}
+        </View>
+
+        {/* Booking platform */}
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>Current Booking Platform</Text>
+          {!data.booking_platform_name && !data.booking_platform_url && !data.booking_platform_notes ? (
+            <Text style={s.paraEmpty}>Not specified.</Text>
+          ) : (
+            <>
+              {row("Platform", data.booking_platform_name)}
+              {row("URL",      data.booking_platform_url)}
+              {data.booking_platform_notes && (
+                <Text style={s.para}>{data.booking_platform_notes}</Text>
+              )}
+            </>
           )}
         </View>
 
