@@ -55,9 +55,20 @@ function fmtAud(v: number) {
   return `$${v.toLocaleString("en-AU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
-export function ApplicationForm({ products }: { products: Product[] }) {
+export function ApplicationForm({
+  products,
+  initialValues,
+  applicationId: initialApplicationId,
+}: {
+  products:       Product[];
+  initialValues?: Partial<FormValues>;
+  applicationId?: string;
+}) {
   const router = useRouter();
-  const [v, setV] = useState<FormValues>(EMPTY);
+  const [v, setV] = useState<FormValues>({ ...EMPTY, ...(initialValues ?? {}) });
+  // applicationId is tracked in state so once we INSERT the first time,
+  // subsequent saves UPDATE the same row instead of creating duplicates.
+  const [applicationId, setApplicationId] = useState<string | undefined>(initialApplicationId);
   const [busy, setBusy] = useState<"idle" | "draft" | "submit" | "finalise">("idle");
   const [success, setSuccess] = useState<{ id: string; invoiceSent: boolean } | null>(null);
 
@@ -114,6 +125,7 @@ export function ApplicationForm({ products }: { products: Product[] }) {
   function buildPayload(): ApplicationInput {
     return {
       ...v,
+      application_id:    applicationId,
       upfront_total_aud: upfrontTotal,
       monthly_total_aud: monthlyTotal,
     };
@@ -125,7 +137,7 @@ export function ApplicationForm({ products }: { products: Product[] }) {
 
     toast.promise(promise, {
       loading: "Saving draft…",
-      success: (r) => (r.ok ? "Draft saved" : ""),
+      success: (r) => (r.ok ? (applicationId ? "Draft updated" : "Draft saved") : ""),
       error:   "Something went wrong saving the draft.",
     });
 
@@ -135,7 +147,14 @@ export function ApplicationForm({ products }: { products: Product[] }) {
       toast.error(result.error);
       return;
     }
-    setSuccess({ id: result.application_id, invoiceSent: false });
+    // Capture the id so future saves UPDATE the same row.
+    // If we're on /application/new, also bump the URL so a refresh keeps state.
+    if (!applicationId) {
+      setApplicationId(result.application_id);
+      try {
+        window.history.replaceState({}, "", `/application/${result.application_id}`);
+      } catch { /* noop */ }
+    }
   }
 
   async function handleSubmit() {
@@ -159,6 +178,7 @@ export function ApplicationForm({ products }: { products: Product[] }) {
       toast.error(result.error);
       return;
     }
+    setApplicationId(result.application_id);
     setSuccess({ id: result.application_id, invoiceSent: result.invoice_sent });
     router.refresh();
   }

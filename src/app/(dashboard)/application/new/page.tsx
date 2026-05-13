@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { ApplicationForm } from "./application-form";
+import { ApplicationForm } from "../_form/application-form";
 
 export default async function NewApplicationPage() {
   const supabase = await createClient();
