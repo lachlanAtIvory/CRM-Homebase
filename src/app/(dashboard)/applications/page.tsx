@@ -89,8 +89,9 @@ export default async function ApplicationsPage() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border bg-card ring-1 ring-foreground/5">
-          {/* Column header */}
-          <div className="grid grid-cols-12 border-b bg-muted/30 px-4 py-2.5 text-xs font-medium text-muted-foreground">
+          {/* Column header — pr-12 reserves the same space the rows give the
+              trash button so the columns align */}
+          <div className="grid grid-cols-12 gap-3 border-b bg-muted/30 px-4 py-2.5 pr-12 text-xs font-medium text-muted-foreground">
             <div className="col-span-3">Company</div>
             <div className="col-span-3">Contact</div>
             <div className="col-span-2">Status</div>
@@ -119,78 +120,82 @@ export default async function ApplicationsPage() {
               return (
                 <div
                   key={id}
-                  className="group relative grid grid-cols-12 items-center transition-all duration-150 hover:bg-muted/50 hover:shadow-[inset_3px_0_0_0_var(--primary)] active:bg-muted/70"
+                  className="group relative transition-all duration-150 hover:bg-muted/50 hover:shadow-[inset_3px_0_0_0_var(--primary)] active:bg-muted/70"
                 >
-                  {/* Big invisible Link covering the whole row except the trash button */}
+                  {/* Big invisible Link covering the row except the trash zone */}
                   <Link
                     href={`/application/${id}`}
                     aria-label={`Open application for ${a.company_name ?? "untitled"}`}
-                    className="absolute inset-0 right-12"
+                    className="absolute inset-y-0 left-0 right-10"
                   />
 
-                  {/* Company */}
-                  <div className="col-span-3 flex items-center gap-2 min-w-0 px-4 py-3 text-sm font-medium">
-                    <FileText size={14} className="shrink-0 text-muted-foreground" />
-                    <span className="truncate">
-                      {(a.company_name as string) || "Untitled"}
-                    </span>
-                  </div>
+                  {/* Data grid — same columns as header, same pr-12 reserves
+                      space for the absolute trash button on the right */}
+                  <div className="grid grid-cols-12 items-center gap-3 px-4 py-3 pr-12 text-sm">
+                    {/* Company */}
+                    <div className="col-span-3 flex min-w-0 items-center gap-2 font-medium">
+                      <FileText size={14} className="shrink-0 text-muted-foreground" />
+                      <span className="truncate">
+                        {(a.company_name as string) || "Untitled"}
+                      </span>
+                    </div>
 
-                  {/* Contact */}
-                  <div className="col-span-3 min-w-0 truncate px-1 py-3 text-xs text-muted-foreground">
-                    {(a.contact_email as string) || "—"}
-                  </div>
+                    {/* Contact */}
+                    <div className="col-span-3 min-w-0 truncate text-xs text-muted-foreground">
+                      {(a.contact_email as string) || "—"}
+                    </div>
 
-                  {/* Status */}
-                  <div className="col-span-2 py-3">
-                    <span
-                      className={cn(
-                        "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
-                        STATUS_STYLES[status] ?? STATUS_STYLES.draft,
+                    {/* Status */}
+                    <div className="col-span-2 min-w-0">
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
+                          STATUS_STYLES[status] ?? STATUS_STYLES.draft,
+                        )}
+                      >
+                        {status}
+                      </span>
+                      <div className="mt-0.5 text-[10px] text-muted-foreground">
+                        {productCount} product{productCount === 1 ? "" : "s"}
+                      </div>
+                    </div>
+
+                    {/* Linked Client */}
+                    <div className="col-span-2 min-w-0 text-xs">
+                      {clientName ? (
+                        <span className="block truncate text-muted-foreground">
+                          {clientName}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                          <AlertCircle size={9} />
+                          Orphan
+                        </span>
                       )}
-                    >
-                      {status}
-                    </span>
-                    <span className="ml-1.5 text-[10px] text-muted-foreground">
-                      · {productCount} product{productCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
+                    </div>
 
-                  {/* Linked Client */}
-                  <div className="col-span-2 min-w-0 py-3 text-xs">
-                    {clientName ? (
-                      <span className="truncate text-muted-foreground">
-                        {clientName}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                        <AlertCircle size={9} />
-                        Orphan
-                      </span>
-                    )}
-                  </div>
+                    {/* Setup */}
+                    <div className="col-span-1 text-right text-xs font-medium text-primary">
+                      {fmtAud(total)}
+                    </div>
 
-                  {/* Setup */}
-                  <div className="col-span-1 px-1 py-3 text-right text-xs font-medium text-primary">
-                    {fmtAud(total)}
-                  </div>
-
-                  {/* Updated + actions */}
-                  <div className="col-span-1 flex items-center justify-end gap-2 pr-3 py-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      {updated}
+                    {/* Updated */}
+                    <div className="col-span-1 flex items-center justify-end gap-1 text-xs text-muted-foreground">
+                      <span className="whitespace-nowrap">{updated}</span>
                       <ArrowRight
                         size={12}
                         className="opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:text-primary group-hover:opacity-100"
                       />
-                    </span>
-                    {/* Delete button — relative so it sits above the absolute Link */}
-                    <span className="relative">
-                      <DeleteApplicationListRowButton
-                        applicationId={id}
-                        label={(a.company_name as string) || "this application"}
-                      />
-                    </span>
+                    </div>
+                  </div>
+
+                  {/* Trash button — absolutely positioned on the far right,
+                      outside the data grid and the Link's click area */}
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <DeleteApplicationListRowButton
+                      applicationId={id}
+                      label={(a.company_name as string) || "this application"}
+                    />
                   </div>
                 </div>
               );
