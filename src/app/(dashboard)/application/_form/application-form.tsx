@@ -182,7 +182,12 @@ export function ApplicationForm({
 
     toast.promise(promise, {
       loading: "Saving draft…",
-      success: (r) => (r.ok ? (applicationId ? "Draft updated" : "Draft saved") : ""),
+      success: (r) => {
+        if (!r.ok) return "";
+        if (r.merged) return "✦ Merged into existing application for this client";
+        if (applicationId) return "Draft updated";
+        return "Draft saved";
+      },
       error:   "Something went wrong saving the draft.",
     });
 
@@ -193,8 +198,10 @@ export function ApplicationForm({
       return;
     }
     // Capture the id so future saves UPDATE the same row.
-    // If we're on /application/new, also bump the URL so a refresh keeps state.
-    if (!applicationId) {
+    // Bump the URL when the row id differs from what we were editing —
+    // either because we just inserted a new row OR because the dedup logic
+    // pointed us at a pre-existing row for this client.
+    if (result.application_id !== applicationId) {
       setApplicationId(result.application_id);
       try {
         window.history.replaceState({}, "", `/application/${result.application_id}`);

@@ -55,7 +55,18 @@ export type ApplicationInput = {
 };
 
 export type SubmitResult =
-  | { ok: true;  application_id: string; invoice_sent: boolean }
+  | {
+      ok: true;
+      application_id: string;
+      invoice_sent: boolean;
+      /**
+       * True when the action found an existing application for the same
+       * client (matched by email) and updated it rather than creating a
+       * duplicate. Lets the form surface "opened existing application"
+       * feedback instead of a silent merge.
+       */
+      merged?: boolean;
+    }
   | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
@@ -88,17 +99,25 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
     requirements:           input.requirements.trim() || null,
   };
 
+  // Dedup check: if no application_id was given (i.e. brand new save) and
+  // this email matches a client who already has an application, merge into
+  // that existing one instead of creating a duplicate.
+  const existingForClient = input.application_id
+    ? null
+    : await findExistingAppForClientByEmail(supabase, input.contact_email);
+  const mergedFlag = !!existingForClient;
+
   let appId: string;
-  if (input.application_id) {
-    // UPDATE — preserves status (e.g. don't downgrade an 'invoiced' to 'draft')
+  if (input.application_id || existingForClient) {
+    const targetId = input.application_id ?? existingForClient!;
     const { error } = await supabase
       .from("applications")
       .update(row)
-      .eq("id", input.application_id);
+      .eq("id", targetId);
     if (error) return { ok: false, error: error.message };
-    appId = input.application_id;
+    appId = targetId;
   } else {
-    // INSERT
+    // INSERT — no existing app to merge into
     const { data, error } = await supabase
       .from("applications")
       .insert({ ...row, status: "draft" })
@@ -115,7 +134,7 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
   // there's a company name to anchor it to.
   await linkApplicationToClient(appId, input);
 
-  return { ok: true, application_id: appId, invoice_sent: false };
+  return { ok: true, application_id: appId, invoice_sent: false, merged: mergedFlag };
 }
 
 // ---------------------------------------------------------------------------
@@ -151,14 +170,23 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
     status:                 "submitted",
   };
 
+  // Dedup check (same logic as saveDraft): if this is a brand-new submit and
+  // the email matches a client who already has an application, update that
+  // one rather than creating a duplicate.
+  const existingForClient = input.application_id
+    ? null
+    : await findExistingAppForClientByEmail(supabase, input.contact_email);
+  const mergedFlag = !!existingForClient;
+
   let appId: string;
-  if (input.application_id) {
+  if (input.application_id || existingForClient) {
+    const targetId = input.application_id ?? existingForClient!;
     const { error: updErr } = await supabase
       .from("applications")
       .update(baseRow)
-      .eq("id", input.application_id);
+      .eq("id", targetId);
     if (updErr) return { ok: false, error: updErr.message };
-    appId = input.application_id;
+    appId = targetId;
   } else {
     const { data: created, error: insErr } = await supabase
       .from("applications")
@@ -263,7 +291,7 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
     }
   }
 
-  return { ok: true, application_id: app.id, invoice_sent: invoiceSent };
+  return { ok: true, application_id: app.id, invoice_sent: invoiceSent, merged: mergedFlag };
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +405,37 @@ async function linkApplicationToClient(
   }
 
   return clientId;
+}
+
+// ---------------------------------------------------------------------------
+// Dedup helper — looks up a client by email and returns the id of their most
+// recent application (if any). Used to merge a fresh save into an existing
+// app rather than creating a duplicate per client.
+// ---------------------------------------------------------------------------
+async function findExistingAppForClientByEmail(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  email:    string,
+): Promise<string | null> {
+  const trimmed = email.trim();
+  if (!trimmed) return null;
+
+  const { data: client } = await supabase
+    .from("clients")
+    .select("id")
+    .eq("email", trimmed)
+    .maybeSingle();
+
+  if (!client?.id) return null;
+
+  const { data: app } = await supabase
+    .from("applications")
+    .select("id")
+    .eq("client_id", client.id)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return app?.id ?? null;
 }
 
 // Action used as a fallback redirect target if a server action ever throws.

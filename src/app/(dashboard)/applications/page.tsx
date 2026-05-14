@@ -2,6 +2,7 @@ import Link from "next/link";
 import { FileText, Rocket, AlertCircle, ArrowRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
+import { DeleteApplicationListRowButton } from "./delete-application-row-button";
 
 const STATUS_STYLES: Record<string, string> = {
   draft:     "bg-muted text-muted-foreground",
@@ -116,13 +117,19 @@ export default async function ApplicationsPage() {
                 : "—";
 
               return (
-                <Link
+                <div
                   key={id}
-                  href={`/application/${id}`}
-                  className="group grid grid-cols-12 items-center px-4 py-3 text-sm transition-all duration-150 hover:bg-muted/50 hover:shadow-[inset_3px_0_0_0_var(--primary)] active:bg-muted/70"
+                  className="group relative grid grid-cols-12 items-center transition-all duration-150 hover:bg-muted/50 hover:shadow-[inset_3px_0_0_0_var(--primary)] active:bg-muted/70"
                 >
+                  {/* Big invisible Link covering the whole row except the trash button */}
+                  <Link
+                    href={`/application/${id}`}
+                    aria-label={`Open application for ${a.company_name ?? "untitled"}`}
+                    className="absolute inset-0 right-12"
+                  />
+
                   {/* Company */}
-                  <div className="col-span-3 flex items-center gap-2 min-w-0 font-medium">
+                  <div className="col-span-3 flex items-center gap-2 min-w-0 px-4 py-3 text-sm font-medium">
                     <FileText size={14} className="shrink-0 text-muted-foreground" />
                     <span className="truncate">
                       {(a.company_name as string) || "Untitled"}
@@ -130,12 +137,12 @@ export default async function ApplicationsPage() {
                   </div>
 
                   {/* Contact */}
-                  <div className="col-span-3 min-w-0 truncate text-xs text-muted-foreground">
+                  <div className="col-span-3 min-w-0 truncate px-1 py-3 text-xs text-muted-foreground">
                     {(a.contact_email as string) || "—"}
                   </div>
 
                   {/* Status */}
-                  <div className="col-span-2">
+                  <div className="col-span-2 py-3">
                     <span
                       className={cn(
                         "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium",
@@ -150,7 +157,7 @@ export default async function ApplicationsPage() {
                   </div>
 
                   {/* Linked Client */}
-                  <div className="col-span-2 min-w-0 text-xs">
+                  <div className="col-span-2 min-w-0 py-3 text-xs">
                     {clientName ? (
                       <span className="truncate text-muted-foreground">
                         {clientName}
@@ -164,19 +171,28 @@ export default async function ApplicationsPage() {
                   </div>
 
                   {/* Setup */}
-                  <div className="col-span-1 text-right text-xs font-medium text-primary">
+                  <div className="col-span-1 px-1 py-3 text-right text-xs font-medium text-primary">
                     {fmtAud(total)}
                   </div>
 
-                  {/* Updated + arrow */}
-                  <div className="col-span-1 flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
-                    <span>{updated}</span>
-                    <ArrowRight
-                      size={12}
-                      className="opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:text-primary group-hover:opacity-100"
-                    />
+                  {/* Updated + actions */}
+                  <div className="col-span-1 flex items-center justify-end gap-2 pr-3 py-3 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      {updated}
+                      <ArrowRight
+                        size={12}
+                        className="opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:text-primary group-hover:opacity-100"
+                      />
+                    </span>
+                    {/* Delete button — relative so it sits above the absolute Link */}
+                    <span className="relative">
+                      <DeleteApplicationListRowButton
+                        applicationId={id}
+                        label={(a.company_name as string) || "this application"}
+                      />
+                    </span>
                   </div>
-                </Link>
+                </div>
               );
             })}
           </div>
