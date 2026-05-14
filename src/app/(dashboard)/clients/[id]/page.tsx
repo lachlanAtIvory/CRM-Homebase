@@ -4,6 +4,7 @@ import { ArrowLeft, FileText, Rocket, ArrowRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { ClientForm } from "./client-form";
 import { TasksSection } from "./tasks-section";
+import { DeleteApplicationButton, DeleteClientButton } from "./delete-buttons";
 
 const STAGE_LABELS: Record<string, string> = {
   call_booked:   "Call Booked",
@@ -125,33 +126,42 @@ export default async function ClientDetailPage({
                   })
                 : "—";
               return (
-                <Link
+                <div
                   key={a.id as string}
-                  href={`/application/${a.id}`}
-                  className="group flex items-center justify-between gap-3 rounded-lg border bg-background p-3 transition-all duration-150 hover:border-foreground/15 hover:bg-muted/30 active:scale-[0.99]"
+                  className="group flex items-center gap-2 rounded-lg border bg-background pr-2 transition-all duration-150 hover:border-foreground/15 hover:bg-muted/30"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <FileText size={14} className="text-muted-foreground" />
-                      <span className="text-sm font-medium">
-                        Application
-                      </span>
-                      <span className={
-                        a.status === "invoiced"  ? "inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
-                      : a.status === "submitted" ? "inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600"
-                                                 : "inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                      }>
-                        {(a.status as string) ?? "draft"}
-                      </span>
+                  <Link
+                    href={`/application/${a.id}`}
+                    className="flex flex-1 items-center justify-between gap-3 p-3 active:scale-[0.99]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <FileText size={14} className="text-muted-foreground" />
+                        <span className="text-sm font-medium">
+                          Application
+                        </span>
+                        <span className={
+                          a.status === "invoiced"  ? "inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                        : a.status === "submitted" ? "inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600"
+                                                   : "inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                        }>
+                          {(a.status as string) ?? "draft"}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {productCount} product{productCount === 1 ? "" : "s"}
+                        {total > 0 && <> · ${total.toLocaleString("en-AU")} setup</>}
+                        <> · Updated {updated}</>
+                      </div>
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {productCount} product{productCount === 1 ? "" : "s"}
-                      {total > 0 && <> · ${total.toLocaleString("en-AU")} setup</>}
-                      <> · Updated {updated}</>
-                    </div>
-                  </div>
-                  <ArrowRight size={14} className="shrink-0 text-muted-foreground transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-primary" />
-                </Link>
+                    <ArrowRight size={14} className="shrink-0 text-muted-foreground transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-primary" />
+                  </Link>
+                  <DeleteApplicationButton
+                    applicationId={a.id as string}
+                    clientId={client.id}
+                    label={`${productCount} product${productCount === 1 ? "" : "s"}`}
+                  />
+                </div>
               );
             })}
           </div>
@@ -175,6 +185,12 @@ export default async function ClientDetailPage({
       <TasksSection
         clientId={client.id}
         initialTasks={tasks ?? []}
+      />
+
+      {/* Danger zone — last on the page, behind a confirm prompt */}
+      <DeleteClientButton
+        clientId={client.id}
+        clientName={client.company_name}
       />
     </div>
   );

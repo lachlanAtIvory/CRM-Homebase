@@ -209,15 +209,31 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
     clientId = created?.id ?? null;
   }
 
-  // 3. Create a deal in the "quoted" stage with the upfront amount
+  // 3. Upsert a single 'quoted' deal for this client. Without this, every
+  // resubmission of the same application creates a new duplicate quoted deal
+  // for the same client.
   if (clientId) {
-    await supabase
+    const { data: existingDeal } = await supabase
       .from("deals")
-      .insert({
-        client_id:      clientId,
-        current_stage:  "quoted",
-        deal_value_aud: input.upfront_total_aud,
-      });
+      .select("id")
+      .eq("client_id", clientId)
+      .eq("current_stage", "quoted")
+      .maybeSingle();
+
+    if (existingDeal?.id) {
+      await supabase
+        .from("deals")
+        .update({ deal_value_aud: input.upfront_total_aud })
+        .eq("id", existingDeal.id);
+    } else {
+      await supabase
+        .from("deals")
+        .insert({
+          client_id:      clientId,
+          current_stage:  "quoted",
+          deal_value_aud: input.upfront_total_aud,
+        });
+    }
   }
 
   // 4. Link the application to the client
