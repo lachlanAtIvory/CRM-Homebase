@@ -88,6 +88,7 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
     requirements:           input.requirements.trim() || null,
   };
 
+  let appId: string;
   if (input.application_id) {
     // UPDATE — preserves status (e.g. don't downgrade an 'invoiced' to 'draft')
     const { error } = await supabase
@@ -95,20 +96,26 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
       .update(row)
       .eq("id", input.application_id);
     if (error) return { ok: false, error: error.message };
-    return { ok: true, application_id: input.application_id, invoice_sent: false };
+    appId = input.application_id;
+  } else {
+    // INSERT
+    const { data, error } = await supabase
+      .from("applications")
+      .insert({ ...row, status: "draft" })
+      .select("id")
+      .single();
+    if (error || !data) {
+      return { ok: false, error: error?.message ?? "Could not save application." };
+    }
+    appId = data.id;
   }
 
-  // INSERT
-  const { data, error } = await supabase
-    .from("applications")
-    .insert({ ...row, status: "draft" })
-    .select("id")
-    .single();
+  // Link the application to a CRM client — so drafts show up on the client
+  // detail page. We match by email (preferred) or create a new client if
+  // there's a company name to anchor it to.
+  await linkApplicationToClient(appId, input);
 
-  if (error || !data) {
-    return { ok: false, error: error?.message ?? "Could not save application." };
-  }
-  return { ok: true, application_id: data.id, invoice_sent: false };
+  return { ok: true, application_id: appId, invoice_sent: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,49 +172,8 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
   }
   const app = { id: appId };
 
-  // 2. Upsert a CRM client by email (if email present) — otherwise create new
-  let clientId: string | null = null;
-  const email = input.contact_email.trim();
-
-  if (email) {
-    const { data: existing } = await supabase
-      .from("clients")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (existing?.id) {
-      // Update existing client with any new info
-      clientId = existing.id;
-      await supabase
-        .from("clients")
-        .update({
-          company_name: input.company_name.trim(),
-          contact_name: input.owner_name.trim() || null,
-          phone:        input.contact_phone.trim() || null,
-          website:      null,
-          notes:        input.requirements.trim() || null,
-          active_tools: input.selected_products,
-        })
-        .eq("id", existing.id);
-    }
-  }
-
-  if (!clientId) {
-    const { data: created } = await supabase
-      .from("clients")
-      .insert({
-        company_name: input.company_name.trim(),
-        contact_name: input.owner_name.trim() || null,
-        phone:        input.contact_phone.trim() || null,
-        email:        email || null,
-        notes:        input.requirements.trim() || null,
-        active_tools: input.selected_products,
-      })
-      .select("id")
-      .single();
-    clientId = created?.id ?? null;
-  }
+  // 2. Ensure the application is linked to a CRM client (find by email or create)
+  const clientId = await linkApplicationToClient(app.id, input, { updateClient: true });
 
   // 3. Upsert a single 'quoted' deal for this client. Without this, every
   // resubmission of the same application creates a new duplicate quoted deal
@@ -236,17 +202,10 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
     }
   }
 
-  // 4. Link the application to the client
-  if (clientId) {
-    await supabase
-      .from("applications")
-      .update({ client_id: clientId })
-      .eq("id", app.id);
-  }
-
   // 5. Build & send the invoice email
   const invoiceNumber = `INV-${app.id.slice(0, 8).toUpperCase()}`;
   let invoiceSent = false;
+  const email = input.contact_email.trim();
 
   if (email) {
     try {
@@ -339,6 +298,85 @@ function validate(input: ApplicationInput): string | null {
     return "Contact email looks invalid.";
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Resolve the CRM client for this application — find existing by email, or
+// create a new one — then write client_id back onto the application row.
+//
+// Returns the client id so callers (e.g. submitApplication) can chain off it.
+// Skips silently if there's not enough info to identify a client.
+//
+// `updateClient: true` keeps the existing client row in sync with the latest
+// form values (used on Submit). On draft saves we don't overwrite the client
+// because the form is still partial.
+// ---------------------------------------------------------------------------
+async function linkApplicationToClient(
+  applicationId: string,
+  input:         ApplicationInput,
+  opts:          { updateClient?: boolean } = {},
+): Promise<string | null> {
+  const supabase = await createClient();
+  const email   = input.contact_email.trim();
+  const company = input.company_name.trim();
+  const owner   = input.owner_name.trim();
+  const phone   = input.contact_phone.trim();
+  const notes   = input.requirements.trim();
+
+  let clientId: string | null = null;
+
+  // Match by email if present
+  if (email) {
+    const { data: existing } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (existing?.id) {
+      clientId = existing.id;
+      if (opts.updateClient) {
+        await supabase
+          .from("clients")
+          .update({
+            company_name: company,
+            contact_name: owner || null,
+            phone:        phone || null,
+            notes:        notes || null,
+            active_tools: input.selected_products,
+          })
+          .eq("id", clientId);
+      }
+    }
+  }
+
+  // Create a new client if no email match — only when we have at least a
+  // company name to anchor it on
+  if (!clientId && company) {
+    const { data: created } = await supabase
+      .from("clients")
+      .insert({
+        company_name: company,
+        contact_name: owner || null,
+        phone:        phone || null,
+        email:        email || null,
+        notes:        notes || null,
+        active_tools: input.selected_products,
+      })
+      .select("id")
+      .single();
+    clientId = created?.id ?? null;
+  }
+
+  // Write the link back onto the application
+  if (clientId) {
+    await supabase
+      .from("applications")
+      .update({ client_id: clientId })
+      .eq("id", applicationId);
+  }
+
+  return clientId;
 }
 
 // Action used as a fallback redirect target if a server action ever throws.
