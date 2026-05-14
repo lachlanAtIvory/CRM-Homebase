@@ -8,6 +8,7 @@ import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays, Down
 import { saveDraft, submitApplication, type ApplicationInput, type TeamMember, type Service } from "./actions";
 import { computeCompletion } from "./completion";
 import { CompletionRing } from "./completion-ring";
+import { calcQuote } from "./pricing";
 
 type Product = {
   key:              string;
@@ -31,6 +32,8 @@ type FormValues = {
   booking_platform_url:   string;
   booking_platform_notes: string;
   selected_products: string[];
+  discount_percent:  number;
+  discount_reason:   string;
   goals:            string;
   requirements:     string;
 };
@@ -49,6 +52,8 @@ const EMPTY: FormValues = {
   booking_platform_url:   "",
   booking_platform_notes: "",
   selected_products: [],
+  discount_percent:  0,
+  discount_reason:   "",
   goals:             "",
   requirements:      "",
 };
@@ -90,7 +95,7 @@ export function ApplicationForm({
   // Live completion calculation
   const completion = useMemo(() => computeCompletion(v), [v]);
 
-  // Live quote totals
+  // Live quote totals (pre-discount)
   const { upfrontTotal, monthlyTotal } = useMemo(() => {
     let upfront = 0;
     let monthly = 0;
@@ -102,6 +107,13 @@ export function ApplicationForm({
     }
     return { upfrontTotal: upfront, monthlyTotal: monthly };
   }, [v.selected_products, products]);
+
+  // Live quote breakdown including discount + GST — single source of truth
+  // shared with the server-side actions / invoice generator
+  const quote = useMemo(
+    () => calcQuote(upfrontTotal, monthlyTotal, v.discount_percent),
+    [upfrontTotal, monthlyTotal, v.discount_percent],
+  );
 
   function set<K extends keyof FormValues>(key: K, value: FormValues[K]) {
     setV((prev) => ({ ...prev, [key]: value }));
@@ -282,6 +294,8 @@ export function ApplicationForm({
             selected_products:      selectedProducts,
             upfront_total_aud:      upfrontTotal,
             monthly_total_aud:      monthlyTotal,
+            discount_percent:       v.discount_percent,
+            discount_reason:        v.discount_reason,
             goals:                  v.goals,
             requirements:           v.requirements,
             generated_at:           new Date().toLocaleDateString("en-AU", {
@@ -612,23 +626,85 @@ export function ApplicationForm({
           })}
         </div>
 
+        {/* Discount — applies to both upfront + monthly */}
+        <div className="mt-5 rounded-lg border bg-card p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Discount
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Applies to both the upfront setup and the monthly retainer.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={v.discount_percent === 0 ? "" : v.discount_percent}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  set("discount_percent", isNaN(n) ? 0 : Math.max(0, Math.min(100, n)));
+                }}
+                placeholder="0"
+                className="w-20 rounded-md border bg-background px-2 py-1.5 text-right text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
+              />
+              <span className="text-sm font-semibold text-muted-foreground">%</span>
+            </div>
+          </div>
+          {v.discount_percent > 0 && (
+            <input
+              type="text"
+              value={v.discount_reason}
+              onChange={(e) => set("discount_reason", e.target.value)}
+              placeholder="Reason (e.g. Friends & family, loyalty, launch promo)"
+              className="w-full rounded-md border bg-background px-3 py-1.5 text-xs outline-none ring-1 ring-transparent focus:ring-primary/40"
+            />
+          )}
+        </div>
+
         {/* Live quote */}
-        <div className="mt-5 rounded-lg border bg-muted/30 p-4">
+        <div className="mt-3 rounded-lg border bg-muted/30 p-4">
           <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Quote Summary
           </div>
           <div className="space-y-1.5">
-            <Row label="Upfront setup total" value={fmtAud(upfrontTotal)} />
-            <Row label="Monthly retainer total" value={`${fmtAud(monthlyTotal)} / month`} />
+            <Row label="Upfront setup subtotal" value={fmtAud(upfrontTotal)} />
+            <Row label="Monthly retainer subtotal" value={`${fmtAud(monthlyTotal)} / month`} />
+            {v.discount_percent > 0 && (
+              <>
+                <div className="my-1 border-t border-dashed" />
+                <Row
+                  label={`Discount (${v.discount_percent}% off setup)`}
+                  value={`−${fmtAud(quote.discount_upfront_amount)}`}
+                  accent
+                />
+                <Row
+                  label={`Discount (${v.discount_percent}% off monthly)`}
+                  value={`−${fmtAud(quote.discount_monthly_amount)} / month`}
+                  accent
+                />
+                <Row
+                  label="Setup after discount"
+                  value={fmtAud(quote.upfront_after_discount)}
+                />
+                <Row
+                  label="Monthly after discount"
+                  value={`${fmtAud(quote.monthly_after_discount)} / month`}
+                />
+              </>
+            )}
             <Row
               label="GST (10%) on setup"
-              value={fmtAud(upfrontTotal * 0.1)}
+              value={fmtAud(quote.gst_amount)}
               dim
             />
             <div className="my-2 border-t" />
             <Row
               label="Total payable now (inc. GST)"
-              value={fmtAud(upfrontTotal * 1.1)}
+              value={fmtAud(quote.total_payable_now)}
               strong
             />
           </div>
@@ -771,24 +847,27 @@ function Textarea({
 }
 
 function Row({
-  label, value, dim, strong,
+  label, value, dim, strong, accent,
 }: {
-  label: string;
-  value: string;
-  dim?: boolean;
+  label:   string;
+  value:   string;
+  dim?:    boolean;
   strong?: boolean;
+  accent?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between text-sm">
       <span className={cn(
         dim    ? "text-xs text-muted-foreground" : "text-muted-foreground",
         strong && "font-semibold text-foreground",
+        accent && "font-medium text-primary",
       )}>
         {label}
       </span>
       <span className={cn(
         dim    ? "text-xs text-muted-foreground" : "text-foreground",
         strong && "font-semibold",
+        accent && "font-medium text-primary",
       )}>
         {value}
       </span>

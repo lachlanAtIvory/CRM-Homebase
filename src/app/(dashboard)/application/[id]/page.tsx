@@ -48,6 +48,8 @@ export default async function ApplicationEditPage({
     booking_platform_url:   (app.booking_platform_url   as string | null) ?? "",
     booking_platform_notes: (app.booking_platform_notes as string | null) ?? "",
     selected_products:   Array.isArray(app.selected_products) ? app.selected_products : [],
+    discount_percent:    Number(app.discount_percent ?? 0) || 0,
+    discount_reason:     (app.discount_reason as string | null) ?? "",
     goals:               (app.goals        as string | null) ?? "",
     requirements:        (app.requirements as string | null) ?? "",
   };

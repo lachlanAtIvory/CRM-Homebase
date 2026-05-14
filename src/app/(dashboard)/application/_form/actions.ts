@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resend, FROM_EMAIL, COMPANY_NAME } from "@/lib/resend";
 import { renderInvoiceHTML, type InvoiceData } from "@/lib/invoice-template";
+import { applyDiscount } from "./pricing";
 
 // One service the business offers. Listed up-top so team members can be
 // assigned to them by id.
@@ -46,9 +47,12 @@ export type ApplicationInput = {
   booking_platform_notes: string;
   // Products
   selected_products: string[]; // product keys
-  // Quote totals (snapshot)
+  // Quote totals (snapshot, pre-discount)
   upfront_total_aud: number;
   monthly_total_aud: number;
+  // Discount applied to both upfront + monthly. 0 = no discount.
+  discount_percent: number;
+  discount_reason:  string;
   // Goals
   goals:            string;
   requirements:     string;
@@ -95,6 +99,8 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
     selected_products:      input.selected_products,
     upfront_total_aud:      input.upfront_total_aud,
     monthly_total_aud:      input.monthly_total_aud,
+    discount_percent:       input.discount_percent,
+    discount_reason:        input.discount_reason.trim() || null,
     goals:                  input.goals.trim()        || null,
     requirements:           input.requirements.trim() || null,
   };
@@ -165,6 +171,8 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
     selected_products:      input.selected_products,
     upfront_total_aud:      input.upfront_total_aud,
     monthly_total_aud:      input.monthly_total_aud,
+    discount_percent:       input.discount_percent,
+    discount_reason:        input.discount_reason.trim() || null,
     goals:                  input.goals.trim()        || null,
     requirements:           input.requirements.trim() || null,
     status:                 "submitted",
@@ -203,9 +211,9 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
   // 2. Ensure the application is linked to a CRM client (find by email or create)
   const clientId = await linkApplicationToClient(app.id, input, { updateClient: true });
 
-  // 3. Upsert a single 'quoted' deal for this client. Without this, every
-  // resubmission of the same application creates a new duplicate quoted deal
-  // for the same client.
+  // 3. Upsert a single 'quoted' deal for this client — use the
+  // post-discount upfront so the pipeline reflects the actual price.
+  const discountedUpfront = applyDiscount(input.upfront_total_aud, input.discount_percent);
   if (clientId) {
     const { data: existingDeal } = await supabase
       .from("deals")
@@ -217,7 +225,7 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
     if (existingDeal?.id) {
       await supabase
         .from("deals")
-        .update({ deal_value_aud: input.upfront_total_aud })
+        .update({ deal_value_aud: discountedUpfront })
         .eq("id", existingDeal.id);
     } else {
       await supabase
@@ -225,7 +233,7 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
         .insert({
           client_id:      clientId,
           current_stage:  "quoted",
-          deal_value_aud: input.upfront_total_aud,
+          deal_value_aud: discountedUpfront,
         });
     }
   }
@@ -237,10 +245,15 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
 
   if (email) {
     try {
-      const productLines = await fetchSelectedProductsForInvoice(input.selected_products);
-      const upfrontSubtotal = input.upfront_total_aud;
-      const gstAmount       = upfrontSubtotal * 0.10;
-      const totalNow        = upfrontSubtotal + gstAmount;
+      const productLines       = await fetchSelectedProductsForInvoice(input.selected_products);
+      const upfrontSubtotal    = input.upfront_total_aud;
+      const monthlySubtotal    = input.monthly_total_aud;
+      const discountUpfrontAmt = upfrontSubtotal - applyDiscount(upfrontSubtotal, input.discount_percent);
+      const discountMonthlyAmt = monthlySubtotal - applyDiscount(monthlySubtotal, input.discount_percent);
+      const upfrontAfterDisc   = upfrontSubtotal - discountUpfrontAmt;
+      const monthlyAfterDisc   = monthlySubtotal - discountMonthlyAmt;
+      const gstAmount          = upfrontAfterDisc * 0.10;
+      const totalNow           = upfrontAfterDisc + gstAmount;
 
       const today = new Date();
       const due   = new Date(today);
@@ -257,7 +270,13 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
         bill_to_abn:      input.abn.trim() || null,
         line_items:       productLines,
         upfront_subtotal: upfrontSubtotal,
-        monthly_subtotal: input.monthly_total_aud,
+        monthly_subtotal: monthlySubtotal,
+        discount_percent:        input.discount_percent || 0,
+        discount_reason:         input.discount_reason.trim() || null,
+        discount_upfront_amount: discountUpfrontAmt,
+        discount_monthly_amount: discountMonthlyAmt,
+        upfront_after_discount:  upfrontAfterDisc,
+        monthly_after_discount:  monthlyAfterDisc,
         gst_rate:         0.10,
         gst_amount:       gstAmount,
         total_payable_now: totalNow,

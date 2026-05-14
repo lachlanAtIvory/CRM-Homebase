@@ -16,10 +16,17 @@ export type InvoiceData = {
   bill_to_address:  string | null;
   bill_to_abn:      string | null;
   line_items:       LineItem[];
-  upfront_subtotal: number;
-  monthly_subtotal: number;
+  upfront_subtotal: number;            // pre-discount
+  monthly_subtotal: number;            // pre-discount
+  // Discount (0 = none, in which case the discount lines are suppressed)
+  discount_percent:        number;
+  discount_reason:         string | null;
+  discount_upfront_amount: number;
+  discount_monthly_amount: number;
+  upfront_after_discount:  number;
+  monthly_after_discount:  number;
   gst_rate:         number; // e.g. 0.10
-  gst_amount:       number; // GST on upfront only (one-time payable now)
+  gst_amount:       number; // GST on post-discount upfront
   total_payable_now: number;
 };
 
@@ -114,12 +121,22 @@ export function renderInvoiceHTML(d: InvoiceData): string {
         <td style="padding:8px 32px 24px;">
           <table role="presentation" width="100%"><tr>
             <td></td>
-            <td style="width:280px;">
+            <td style="width:300px;">
               <table role="presentation" width="100%">
                 <tr>
                   <td style="font-size:13px;color:#6b7280;padding:4px 0;">Setup subtotal</td>
                   <td style="font-size:13px;color:#111827;text-align:right;padding:4px 0;">${fmtAud(d.upfront_subtotal)}</td>
                 </tr>
+                ${d.discount_percent > 0 ? `
+                <tr>
+                  <td style="font-size:13px;color:#6c4bf1;padding:4px 0;">Discount (${d.discount_percent}% off)${d.discount_reason ? ` <span style="color:#9ca3af;font-size:11px;">— ${escapeHtml(d.discount_reason)}</span>` : ""}</td>
+                  <td style="font-size:13px;color:#6c4bf1;text-align:right;padding:4px 0;">−${fmtAud(d.discount_upfront_amount)}</td>
+                </tr>
+                <tr>
+                  <td style="font-size:13px;color:#111827;font-weight:600;padding:4px 0;border-top:1px solid #e5e7eb;">Setup after discount</td>
+                  <td style="font-size:13px;color:#111827;font-weight:600;text-align:right;padding:4px 0;border-top:1px solid #e5e7eb;">${fmtAud(d.upfront_after_discount)}</td>
+                </tr>
+                ` : ""}
                 <tr>
                   <td style="font-size:13px;color:#6b7280;padding:4px 0;">GST (10%)</td>
                   <td style="font-size:13px;color:#111827;text-align:right;padding:4px 0;">${fmtAud(d.gst_amount)}</td>
@@ -128,10 +145,17 @@ export function renderInvoiceHTML(d: InvoiceData): string {
                   <td style="font-size:14px;color:#111827;font-weight:700;padding:8px 0;border-top:2px solid #111827;">Total payable now</td>
                   <td style="font-size:14px;color:#111827;font-weight:700;text-align:right;padding:8px 0;border-top:2px solid #111827;">${fmtAud(d.total_payable_now)}</td>
                 </tr>
+                ${d.discount_percent > 0 ? `
+                <tr>
+                  <td style="font-size:12px;color:#6b7280;padding:8px 0 0;">Recurring monthly (was ${fmtAud(d.monthly_subtotal)})</td>
+                  <td style="font-size:12px;color:#6b7280;text-align:right;padding:8px 0 0;">${fmtAud(d.monthly_after_discount)} +GST</td>
+                </tr>
+                ` : `
                 <tr>
                   <td style="font-size:12px;color:#6b7280;padding:8px 0 0;">Recurring monthly</td>
                   <td style="font-size:12px;color:#6b7280;text-align:right;padding:8px 0 0;">${fmtAud(d.monthly_subtotal)} +GST</td>
                 </tr>
+                `}
               </table>
             </td>
           </tr></table>

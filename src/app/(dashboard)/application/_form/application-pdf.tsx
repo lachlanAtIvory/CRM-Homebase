@@ -33,6 +33,9 @@ export type PdfData = {
   selected_products:  PdfProduct[];
   upfront_total_aud:  number;
   monthly_total_aud:  number;
+  // Discount (0 percent = none)
+  discount_percent:   number;
+  discount_reason:    string;
   // Goals
   goals:        string;
   requirements: string;
@@ -233,9 +236,16 @@ function row(label: string, value: string) {
 
 // ─── Document ───────────────────────────────────────────────────────────────
 export function ApplicationPDF({ data }: { data: PdfData }) {
-  const upfront = data.upfront_total_aud;
-  const gst     = upfront * 0.10;
-  const totalNow = upfront + gst;
+  const upfront        = data.upfront_total_aud;
+  const monthly        = data.monthly_total_aud;
+  const discountPct    = Number(data.discount_percent) || 0;
+  const discountUpAmt  = Math.round(upfront * (discountPct / 100) * 100) / 100;
+  const discountMoAmt  = Math.round(monthly * (discountPct / 100) * 100) / 100;
+  const upfrontAfter   = Math.round((upfront - discountUpAmt) * 100) / 100;
+  const monthlyAfter   = Math.round((monthly - discountMoAmt) * 100) / 100;
+  const gst            = Math.round(upfrontAfter * 0.10 * 100) / 100;
+  const totalNow       = Math.round((upfrontAfter + gst) * 100) / 100;
+  const hasDiscount    = discountPct > 0;
 
   return (
     <Document
@@ -374,6 +384,21 @@ export function ApplicationPDF({ data }: { data: PdfData }) {
                   <Text style={s.totalsLabel}>Setup subtotal</Text>
                   <Text style={s.totalsValue}>{fmt(upfront)}</Text>
                 </View>
+                {hasDiscount && (
+                  <>
+                    <View style={s.totalsRow}>
+                      <Text style={[s.totalsLabel, { color: PURPLE }]}>
+                        Discount ({discountPct}% off setup)
+                        {data.discount_reason ? ` — ${data.discount_reason}` : ""}
+                      </Text>
+                      <Text style={[s.totalsValue, { color: PURPLE }]}>−{fmt(discountUpAmt)}</Text>
+                    </View>
+                    <View style={s.totalsRow}>
+                      <Text style={{ fontSize: 10, color: TEXT_DARK, fontWeight: "bold" }}>Setup after discount</Text>
+                      <Text style={{ fontSize: 10, color: TEXT_DARK, fontWeight: "bold" }}>{fmt(upfrontAfter)}</Text>
+                    </View>
+                  </>
+                )}
                 <View style={s.totalsRow}>
                   <Text style={s.totalsLabel}>GST (10%)</Text>
                   <Text style={s.totalsValue}>{fmt(gst)}</Text>
@@ -382,10 +407,19 @@ export function ApplicationPDF({ data }: { data: PdfData }) {
                   <Text style={s.totalFinalLabel}>Total payable now</Text>
                   <Text style={s.totalFinalValue}>{fmt(totalNow)}</Text>
                 </View>
-                <View style={s.totalsRow}>
-                  <Text style={s.totalsLabel}>Recurring monthly</Text>
-                  <Text style={s.totalsValue}>{fmt(data.monthly_total_aud)} + GST</Text>
-                </View>
+                {hasDiscount ? (
+                  <View style={s.totalsRow}>
+                    <Text style={s.totalsLabel}>
+                      Recurring monthly (was {fmt(monthly)})
+                    </Text>
+                    <Text style={s.totalsValue}>{fmt(monthlyAfter)} + GST</Text>
+                  </View>
+                ) : (
+                  <View style={s.totalsRow}>
+                    <Text style={s.totalsLabel}>Recurring monthly</Text>
+                    <Text style={s.totalsValue}>{fmt(monthly)} + GST</Text>
+                  </View>
+                )}
               </View>
             </View>
           )}
