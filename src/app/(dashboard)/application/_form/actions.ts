@@ -351,35 +351,39 @@ async function linkApplicationToClient(
   const phone   = input.contact_phone.trim();
   const notes   = input.requirements.trim();
 
+  // What client (if any) is this application ALREADY linked to? We use this
+  // as a fallback so an app that's already attached to a client doesn't
+  // get a brand-new duplicate client created on every save when there's
+  // no email match to look up.
+  const { data: currentApp } = await supabase
+    .from("applications")
+    .select("client_id")
+    .eq("id", applicationId)
+    .maybeSingle();
+  const currentLinkedId = (currentApp?.client_id as string | null) ?? null;
+
   let clientId: string | null = null;
 
-  // Match by email if present
+  // Match by email if present — this can switch the link to a different
+  // client if the user changed the email to one that matches a real client
   if (email) {
     const { data: existing } = await supabase
       .from("clients")
       .select("id")
       .eq("email", email)
       .maybeSingle();
-
-    if (existing?.id) {
-      clientId = existing.id;
-      if (opts.updateClient) {
-        await supabase
-          .from("clients")
-          .update({
-            company_name: company,
-            contact_name: owner || null,
-            phone:        phone || null,
-            notes:        notes || null,
-            active_tools: input.selected_products,
-          })
-          .eq("id", clientId);
-      }
-    }
+    if (existing?.id) clientId = existing.id;
   }
 
-  // Create a new client if no email match — only when we have at least a
-  // company name to anchor it on
+  // No email match — fall back to whatever client this app was already
+  // linked to. This is the key fix: never create a duplicate when there's
+  // already a client attached.
+  if (!clientId && currentLinkedId) {
+    clientId = currentLinkedId;
+  }
+
+  // Still nothing — only NOW do we create a brand-new client (first save
+  // for a brand-new app with no matching email)
   if (!clientId && company) {
     const { data: created } = await supabase
       .from("clients")
@@ -396,8 +400,25 @@ async function linkApplicationToClient(
     clientId = created?.id ?? null;
   }
 
-  // Write the link back onto the application
-  if (clientId) {
+  // On Submit we sync the form values back onto the linked client
+  // (so e.g. an updated company name flows through). Drafts don't, since
+  // their values are still partial.
+  if (clientId && opts.updateClient) {
+    await supabase
+      .from("clients")
+      .update({
+        company_name: company,
+        contact_name: owner || null,
+        phone:        phone || null,
+        email:        email || null,
+        notes:        notes || null,
+        active_tools: input.selected_products,
+      })
+      .eq("id", clientId);
+  }
+
+  // Write the link back onto the application (only if it changed)
+  if (clientId && clientId !== currentLinkedId) {
     await supabase
       .from("applications")
       .update({ client_id: clientId })
