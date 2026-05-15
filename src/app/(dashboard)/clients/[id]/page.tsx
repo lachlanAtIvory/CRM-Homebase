@@ -123,6 +123,7 @@ export default async function ClientDetailPage({
               const updated      = a.updated_at
                 ? new Date(a.updated_at as string).toLocaleDateString("en-AU", {
                     day: "numeric", month: "short", year: "2-digit",
+                    timeZone: "Australia/Sydney",
                   })
                 : "—";
               return (

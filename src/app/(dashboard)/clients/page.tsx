@@ -75,6 +75,7 @@ export default async function ClientsPage() {
           const updatedAt = deal?.updated_at
             ? new Date(deal.updated_at).toLocaleDateString("en-AU", {
                 day: "numeric", month: "short", year: "2-digit",
+                timeZone: "Australia/Sydney",
               })
             : "—";
 

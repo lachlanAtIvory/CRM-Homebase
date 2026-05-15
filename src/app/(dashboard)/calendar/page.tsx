@@ -1,6 +1,11 @@
 import { CalendarDays } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 
+// Pin Sydney timezone — this page renders on the Vercel server (UTC), so
+// without an explicit timeZone a Monday 9am AEDT meeting (= Sunday 22:00
+// UTC) would format as Sunday. AU-focused CRM, AU time is correct.
+const AU_TZ = "Australia/Sydney";
+
 function formatMeeting(startIso: string, endIso: string) {
   const start = new Date(startIso);
   const end   = new Date(endIso);
@@ -8,14 +13,17 @@ function formatMeeting(startIso: string, endIso: string) {
     weekday: "long",
     day:     "numeric",
     month:   "long",
+    timeZone: AU_TZ,
   });
   const startTime = start.toLocaleTimeString("en-AU", {
     hour:   "2-digit",
     minute: "2-digit",
+    timeZone: AU_TZ,
   });
   const endTime = end.toLocaleTimeString("en-AU", {
     hour:   "2-digit",
     minute: "2-digit",
+    timeZone: AU_TZ,
   });
   return { date, time: `${startTime} – ${endTime}` };
 }

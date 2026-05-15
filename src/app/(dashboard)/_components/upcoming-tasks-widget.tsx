@@ -4,9 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
+// Pin Sydney TZ everywhere so server-rendered dates can't drift by a day
+const AU_TZ = "Australia/Sydney";
+
 function formatDate(iso: string) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-AU", {
     day: "numeric", month: "short",
+    timeZone: AU_TZ,
   });
 }
 

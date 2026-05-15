@@ -334,8 +334,11 @@ async function fetchSelectedProductsForInvoice(
 }
 
 function fmtDate(d: Date): string {
+  // Invoices are issued from Sydney; pin TZ so the date doesn't shift when
+  // generated late at night UTC
   return d.toLocaleDateString("en-AU", {
     day: "numeric", month: "short", year: "numeric",
+    timeZone: "Australia/Sydney",
   });
 }
 
