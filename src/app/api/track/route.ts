@@ -33,9 +33,24 @@ const ALLOWED_ORIGINS = new Set<string>([
 ]);
 
 function corsHeaders(origin: string | null): HeadersInit {
-  const allow = origin && ALLOWED_ORIGINS.has(origin) ? origin : "*";
+  const isAllowed = origin && ALLOWED_ORIGINS.has(origin);
+
+  // For allowed origins we echo them back AND set credentials=true so that
+  // Firefox's credentialed sendBeacon preflight succeeds. (You can't pair
+  // "*" with credentials, so unknown origins fall back to a non-credentialed
+  // response.)
+  if (isAllowed) {
+    return {
+      "Access-Control-Allow-Origin":      origin!,
+      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Allow-Methods":     "POST, OPTIONS",
+      "Access-Control-Allow-Headers":     "Content-Type",
+      "Access-Control-Max-Age":           "86400",
+      "Vary":                             "Origin",
+    };
+  }
   return {
-    "Access-Control-Allow-Origin":  allow,
+    "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Max-Age":       "86400",
