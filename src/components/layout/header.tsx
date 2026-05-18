@@ -23,6 +23,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/clients":         "Clients",
   "/applications":    "Applications",
   "/tasks":           "Tasks",
+  "/analytics":       "Analytics",
   "/agents":          "Agents",
   "/calendar":        "Calendar",
   "/settings":        "Settings",

@@ -1,7 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+// Public paths — accessible without auth. Includes analytics endpoints
+// because the tracking script + beacon are called from public websites.
+const PUBLIC_PATHS = [
+  "/login",
+  "/auth/callback",
+  "/api/track",
+  "/track.js",
+];
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
