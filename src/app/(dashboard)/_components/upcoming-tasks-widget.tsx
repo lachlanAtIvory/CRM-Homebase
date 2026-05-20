@@ -85,16 +85,19 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
           <div className="space-y-2">
             {tasks.map((t) => {
               const overdue = isOverdue(t.due_date, t.due_time, todayIso, now);
-              const clientName = clientNameById.get(t.client_id) ?? "—";
+              const isInternal = !t.client_id;
+              const clientName = t.client_id ? (clientNameById.get(t.client_id) ?? "—") : "Internal";
               const dueLabel = t.due_date
                 ? t.due_time
                   ? `${formatDate(t.due_date)} · ${formatTime(t.due_time)}`
                   : formatDate(t.due_date)
                 : "";
+              // Internal tasks have no client to navigate to — link to /tasks
+              const href = isInternal ? "/tasks" : `/clients/${t.client_id}`;
               return (
                 <Link
                   key={t.id}
-                  href={`/clients/${t.client_id}`}
+                  href={href}
                   className={cn(
                     "flex items-start gap-3 rounded-lg border p-3 transition-all duration-150 hover:bg-muted/30",
                     overdue && "border-destructive/40 bg-destructive/5",
@@ -109,7 +112,9 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{t.title}</p>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="truncate">{clientName}</span>
+                      <span className={cn("truncate", isInternal && "text-primary font-medium")}>
+                        {clientName}
+                      </span>
                       {dueLabel && (
                         <>
                           <span>·</span>

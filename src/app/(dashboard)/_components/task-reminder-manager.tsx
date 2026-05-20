@@ -38,13 +38,19 @@ export function TaskReminderManager() {
 
       if (cancelled || !tasks || tasks.length === 0) return;
 
-      // Pull client names for nicer notification copy
-      const clientIds = [...new Set(tasks.map((t) => t.client_id as string))];
-      const { data: clients } = await supabase
-        .from("clients")
-        .select("id, company_name")
-        .in("id", clientIds);
-      const clientNameById = new Map((clients ?? []).map((c) => [c.id, c.company_name as string]));
+      // Pull client names for nicer notification copy (only for tasks that
+      // actually have a client linked — internal tasks have client_id=null)
+      const clientIds = [...new Set(
+        tasks.map((t) => t.client_id as string | null).filter((id): id is string => !!id),
+      )];
+      let clientNameById = new Map<string, string>();
+      if (clientIds.length > 0) {
+        const { data: clients } = await supabase
+          .from("clients")
+          .select("id, company_name")
+          .in("id", clientIds);
+        clientNameById = new Map((clients ?? []).map((c) => [c.id, c.company_name as string]));
+      }
 
       // Clear any previously-scheduled timers — we'll re-schedule from scratch
       timersRef.current.forEach((id) => window.clearTimeout(id));
@@ -68,8 +74,10 @@ export function TaskReminderManager() {
 
         const taskId     = task.id as string;
         const title      = task.title as string;
-        const clientId   = task.client_id as string;
-        const clientName = clientNameById.get(clientId) ?? "—";
+        const clientId   = (task.client_id as string | null) ?? null;
+        const clientName = clientId ? (clientNameById.get(clientId) ?? "—") : "Internal task";
+        // Internal tasks navigate to /tasks rather than a (non-existent) client page
+        const destinationHref = clientId ? `/clients/${clientId}` : "/tasks";
 
         const timerId = window.setTimeout(() => {
           if (firedRef.current.has(taskId)) return;
@@ -82,7 +90,7 @@ export function TaskReminderManager() {
             action: {
               label: "View",
               onClick: () => {
-                window.location.href = `/clients/${clientId}`;
+                window.location.href = destinationHref;
               },
             },
           });
@@ -100,7 +108,7 @@ export function TaskReminderManager() {
               });
               n.onclick = () => {
                 window.focus();
-                window.location.href = `/clients/${clientId}`;
+                window.location.href = destinationHref;
                 n.close();
               };
             } catch {

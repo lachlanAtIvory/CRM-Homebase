@@ -5,7 +5,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, ListTodo, Bell, BellRing, BellOff } from "lucide-react";
+import { CheckCircle2, ListTodo, Bell, BellRing, BellOff, Plus, Loader2, Briefcase } from "lucide-react";
 import { playSuccessChime, unlockAudio } from "@/lib/sounds";
 import {
   OpenTaskRow,
@@ -15,14 +15,59 @@ import {
 } from "@/app/(dashboard)/clients/[id]/tasks-section";
 
 type Task = BaseTask & {
-  client_id:   string;
-  client_name: string;
+  client_id:   string | null;
+  client_name: string | null;
 };
 
 export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
   const [tasks,    setTasks]    = useState<Task[]>(initialTasks);
   const [showDone, setShowDone] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Internal-task add form state
+  const [newTitle,   setNewTitle]   = useState("");
+  const [newDate,    setNewDate]    = useState("");
+  const [newTime,    setNewTime]    = useState("");
+  const [adding,     setAdding]     = useState(false);
+
+  async function addInternalTask() {
+    if (!newTitle.trim()) return;
+    setAdding(true);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("tasks")
+      .insert({
+        client_id: null, // internal admin task — not tied to a client
+        title:     newTitle.trim(),
+        due_date:  newDate || null,
+        due_time:  newTime || null,
+      })
+      .select("id, client_id, title, due_date, due_time, completed_at, created_at")
+      .single();
+    setAdding(false);
+
+    if (!error && data) {
+      setTasks((prev) => [
+        {
+          id:           data.id as string,
+          client_id:    null,
+          client_name:  null,
+          title:        data.title as string,
+          due_date:     data.due_date     as string | null,
+          due_time:     data.due_time     as string | null,
+          completed_at: data.completed_at as string | null,
+          created_at:   data.created_at   as string,
+        },
+        ...prev,
+      ]);
+      setNewTitle("");
+      setNewDate("");
+      setNewTime("");
+      toast.success("Internal task added");
+    } else {
+      toast.error("Could not add task");
+    }
+  }
 
   const { open, completed, overdueCount, currentCount } = useMemo(() => {
     const open      = tasks.filter((t) => !t.completed_at);
@@ -114,6 +159,48 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
         <NotificationToggle />
       </div>
 
+      {/* ───── Add internal task ───── */}
+      <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
+        <div className="mb-3 flex items-center gap-2">
+          <Briefcase size={14} className="text-primary" />
+          <h2 className="text-sm font-semibold">Add Internal Task</h2>
+          <span className="text-xs text-muted-foreground">— for admin work not tied to a client</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addInternalTask()}
+            placeholder="e.g. Renew domain, follow up with accountant…"
+            className="min-w-0 flex-1 basis-48 rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
+          />
+          <input
+            type="date"
+            value={newDate}
+            onChange={(e) => setNewDate(e.target.value)}
+            className="rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
+          />
+          <input
+            type="time"
+            value={newTime}
+            onChange={(e) => setNewTime(e.target.value)}
+            disabled={!newDate}
+            title={!newDate ? "Set a date first" : "Optional time"}
+            className="rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={addInternalTask}
+            disabled={adding || !newTitle.trim()}
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow active:scale-[0.95] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
+          >
+            {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            Add
+          </button>
+        </div>
+      </div>
+
       {/* ───── Open tasks list ───── */}
       <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
         <h2 className="mb-4 text-sm font-semibold">Open Tasks</h2>
@@ -122,7 +209,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
           <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
             <ListTodo size={28} className="opacity-30" />
             <p className="text-sm">All caught up — no open tasks</p>
-            <p className="text-xs">Open a client to add new tasks</p>
+            <p className="text-xs">Add one above, or open a client to add a client-linked task</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -154,12 +241,19 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
                     if (ok) setEditingId(null);
                   }}
                   leftSlot={
-                    <Link
-                      href={`/clients/${task.client_id}`}
-                      className="truncate text-xs text-muted-foreground transition-colors hover:text-primary hover:underline"
-                    >
-                      {task.client_name}
-                    </Link>
+                    task.client_id && task.client_name ? (
+                      <Link
+                        href={`/clients/${task.client_id}`}
+                        className="truncate text-xs text-muted-foreground transition-colors hover:text-primary hover:underline"
+                      >
+                        {task.client_name}
+                      </Link>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                        <Briefcase size={9} />
+                        Internal
+                      </span>
+                    )
                   }
                 />
               ))}
@@ -197,12 +291,19 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm line-through">{task.title}</p>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-3">
-                          <Link
-                            href={`/clients/${task.client_id}`}
-                            className="text-xs text-muted-foreground hover:text-primary hover:underline"
-                          >
-                            {task.client_name}
-                          </Link>
+                          {task.client_id && task.client_name ? (
+                            <Link
+                              href={`/clients/${task.client_id}`}
+                              className="text-xs text-muted-foreground hover:text-primary hover:underline"
+                            >
+                              {task.client_name}
+                            </Link>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-primary">
+                              <Briefcase size={9} />
+                              Internal
+                            </span>
+                          )}
                           {task.completed_at && (
                             <span className="text-xs text-muted-foreground">
                               Completed {formatDateOnly(task.completed_at.split("T")[0])}
