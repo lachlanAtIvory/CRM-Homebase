@@ -136,14 +136,18 @@ export function AnalyticsDashboard({
                   <stop offset="100%" stopColor="#6c4bf1" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6b7280" }} stroke="#e5e7eb" />
-              <YAxis tick={{ fontSize: 11, fill: "#6b7280" }} stroke="#e5e7eb" allowDecimals={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} stroke="var(--border)" />
+              <YAxis tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} stroke="var(--border)" allowDecimals={false} />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "white", border: "1px solid #e5e7eb",
-                  borderRadius: 8, fontSize: 12,
+                  backgroundColor: "var(--popover)",
+                  color:           "var(--popover-foreground)",
+                  border:          "1px solid var(--border)",
+                  borderRadius:    8,
+                  fontSize:        12,
                 }}
-                labelStyle={{ color: "#111827", fontWeight: 600 }}
+                labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
+                itemStyle={{ color: "var(--foreground)" }}
               />
               <Area
                 type="monotone"
@@ -323,7 +327,7 @@ function DeviceDonut({ rows }: { rows: { label: string; count: number }[] }) {
               nameKey="label"
               innerRadius={36}
               outerRadius={56}
-              stroke="white"
+              stroke="var(--card)"
               strokeWidth={2}
               animationDuration={900}
             >

@@ -16,6 +16,7 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { signOut } from "@/lib/actions";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 
 const PAGE_TITLES: Record<string, string> = {
   "/":                "Home",
@@ -53,6 +54,9 @@ export function Header({ email, avatarUrl }: HeaderProps) {
           <Rocket size={13} className="transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:rotate-12" />
           Launch Application
         </Link>
+
+        {/* Light / dark toggle */}
+        <ThemeToggle />
 
         <DropdownMenu>
           <DropdownMenuTrigger
