@@ -33,8 +33,14 @@ export async function POST(req: NextRequest) {
       return new Response("TTS not configured on server", { status: 503 });
     }
 
+    // Strip markdown BEFORE sending to ElevenLabs. Stray `**` / `_` etc
+    // trip the multilingual model's language detection — it sometimes
+    // switches mid-sentence to Chinese (or other languages) when it sees
+    // unfamiliar tokens. Plain text avoids the whole class of bug.
+    const cleaned = stripMarkdown(text);
+
     // Cap reply length so a runaway reply doesn't burn $5 of TTS quota
-    const truncated = text.length > 2000 ? text.slice(0, 2000) : text;
+    const truncated = cleaned.length > 2000 ? cleaned.slice(0, 2000) : cleaned;
 
     const elevenRes = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
@@ -76,4 +82,37 @@ export async function POST(req: NextRequest) {
     console.error("/api/concierge/speak failed:", e);
     return new Response("Server error", { status: 500 });
   }
+}
+
+/**
+ * Strip common markdown syntax so the TTS gets clean spoken prose.
+ * Specifically targets the things ElevenLabs' multilingual model trips
+ * on — asterisks, underscores, backticks, link syntax, headings, bullets.
+ */
+function stripMarkdown(input: string): string {
+  return input
+    // links [text](url) → text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    // images ![alt](url) → alt
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    // inline code `text` → text
+    .replace(/`([^`]+)`/g, "$1")
+    // code fences ```...``` → blank (rare in our context but safe)
+    .replace(/```[\s\S]*?```/g, " ")
+    // bold/italic combos: ***text*** ** *text* * _text_ __text__
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
+    .replace(/_{1,3}([^_]+)_{1,3}/g, "$1")
+    // strikethrough ~~text~~ → text
+    .replace(/~~([^~]+)~~/g, "$1")
+    // headings (# Foo) at line start → Foo
+    .replace(/^#{1,6}\s+/gm, "")
+    // bullet markers at line start
+    .replace(/^\s*[-*+]\s+/gm, "")
+    // numbered lists at line start ("1. ")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    // blockquote markers
+    .replace(/^\s*>\s?/gm, "")
+    // collapse triple+ newlines
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

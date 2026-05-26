@@ -3,7 +3,17 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Send, Sparkles, Volume2, VolumeX, Loader2 } from "lucide-react";
+import { Mic, MicOff, Send, Sparkles, Volume2, VolumeX, Loader2, X, UtensilsCrossed, Coffee, Beer, Eye, Trees, Clock, MapPin } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type LocalRec = {
+  name:        string;
+  category:    string | null;
+  distance:    string | null;
+  hours:       string | null;
+  description: string | null;
+  tags:        string[];
+};
 
 type Props = {
   hotelSlug:  string;
@@ -12,7 +22,43 @@ type Props = {
   brandColor: string;
   logoUrl:    string | null;
   greeting:   string;
+  localRecs:  LocalRec[];
 };
+
+// Categories surfaced as quick-tap icons. Each has a matcher run against
+// every local rec to build its filtered list. Order = display order.
+const CATEGORIES: {
+  id:     string;
+  label:  string;
+  icon:   typeof UtensilsCrossed;
+  match:  (r: LocalRec) => boolean;
+}[] = [
+  {
+    id: "food",   label: "Food",        icon: UtensilsCrossed,
+    match: (r) => r.category === "restaurant"
+               || r.tags.includes("dinner") || r.tags.includes("lunch"),
+  },
+  {
+    id: "coffee", label: "Coffee",      icon: Coffee,
+    match: (r) => r.category === "cafe"
+               || r.tags.includes("coffee") || r.tags.includes("breakfast"),
+  },
+  {
+    id: "drinks", label: "Drinks",      icon: Beer,
+    match: (r) => r.category === "pub" || r.category === "rooftop bar"
+               || r.tags.includes("drinks") || r.tags.includes("beer"),
+  },
+  {
+    id: "sights", label: "Sightseeing", icon: Eye,
+    match: (r) => r.category === "attraction"
+               || r.tags.includes("sightseeing") || r.tags.includes("view"),
+  },
+  {
+    id: "outdoor", label: "Outdoor",    icon: Trees,
+    match: (r) => r.tags.includes("outdoor") || r.tags.includes("walk")
+               || r.tags.includes("rooftop"),
+  },
+];
 
 // Quick-tap chips guests see before typing. Chosen to showcase the bot's strengths.
 const QUICK_PROMPTS = [
@@ -31,7 +77,7 @@ function randomId(): string {
 }
 
 export function ConciergeChat({
-  hotelSlug, hotelName, tagline, brandColor, logoUrl, greeting,
+  hotelSlug, hotelName, tagline, brandColor, logoUrl, greeting, localRecs,
 }: Props) {
   // Per-browser identifiers so we can attribute conversations to a session
   const [sessionId,  setSessionId]  = useState<string>("");
@@ -41,7 +87,18 @@ export function ConciergeChat({
   const [listening,  setListening]  = useState(false);
   const [speaking,   setSpeaking]   = useState(false);   // Maya is currently generating/playing
   const [pendingAudio, setPendingAudio] = useState<{ url: string; messageId: string } | null>(null); // tap-to-play fallback
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [input,      setInput]      = useState("");
+
+  // Pre-compute which categories actually have matching recs — empty ones
+  // are hidden so we don't show, say, "Outdoor" if there's nothing tagged.
+  const visibleCategories = CATEGORIES
+    .map((cat) => ({ ...cat, recs: localRecs.filter(cat.match) }))
+    .filter((cat) => cat.recs.length > 0);
+
+  const activeCategoryRecs = activeCategory
+    ? (visibleCategories.find((c) => c.id === activeCategory)?.recs ?? [])
+    : [];
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // Persistent <audio> element — we "unlock" it on the speaker-toggle click
@@ -387,7 +444,7 @@ export function ConciergeChat({
         </div>
       </main>
 
-      {/* ── Quick chips (only when no conversation yet) ─── */}
+      {/* ── Quick chips — only shown before the first message ── */}
       {messages.length === 0 && (
         <div className="shrink-0 overflow-x-auto border-t bg-card/60 px-3 py-3 sm:px-6">
           <div className="mx-auto flex max-w-2xl flex-wrap gap-2">
@@ -402,6 +459,135 @@ export function ConciergeChat({
                 {p}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Category icon bar (always visible, opens a sheet of curated picks) ── */}
+      {visibleCategories.length > 0 && (
+        <div className="shrink-0 border-t bg-card/60 px-3 py-3 sm:px-6">
+          <div className="mx-auto flex max-w-2xl items-center justify-around gap-1 sm:gap-2">
+            {visibleCategories.map((cat) => {
+              const Icon = cat.icon;
+              const active = activeCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setActiveCategory(active ? null : cat.id)}
+                  disabled={!ready || !sessionId}
+                  className={cn(
+                    "group flex flex-1 flex-col items-center gap-1 rounded-xl p-2 transition-all duration-150 active:scale-[0.95] disabled:opacity-50",
+                    active && "scale-[1.05]",
+                  )}
+                  title={`${cat.label} — ${cat.recs.length} pick${cat.recs.length === 1 ? "" : "s"}`}
+                >
+                  <span
+                    className="flex h-10 w-10 items-center justify-center rounded-full transition-all"
+                    style={{
+                      background: active ? "var(--brand)" : "color-mix(in oklch, var(--brand) 12%, transparent)",
+                      color:      active ? "white"        : "var(--brand)",
+                    }}
+                  >
+                    <Icon size={18} />
+                  </span>
+                  <span className="text-[10px] font-medium text-muted-foreground group-hover:text-foreground">
+                    {cat.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Category sheet — bottom-sheet pattern (mobile-first) ── */}
+      {activeCategory && activeCategoryRecs.length > 0 && (
+        <div
+          className="fixed inset-0 z-30 flex flex-col bg-foreground/40 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setActiveCategory(null)}
+        >
+          <div className="mt-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="max-h-[75dvh] overflow-y-auto rounded-t-3xl border-t bg-card shadow-2xl animate-in slide-in-from-bottom duration-200">
+              {/* Sheet handle + header */}
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-card/95 px-5 py-3 backdrop-blur">
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const cat = visibleCategories.find((c) => c.id === activeCategory);
+                    if (!cat) return null;
+                    const Icon = cat.icon;
+                    return (
+                      <>
+                        <span
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-white"
+                          style={{ background: "var(--brand)" }}
+                        >
+                          <Icon size={14} />
+                        </span>
+                        <h3 className="text-sm font-semibold">{cat.label} nearby</h3>
+                        <span className="text-xs text-muted-foreground">
+                          ({cat.recs.length} pick{cat.recs.length === 1 ? "" : "s"})
+                        </span>
+                      </>
+                    );
+                  })()}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveCategory(null)}
+                  className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label="Close"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* List of curated picks */}
+              <div className="p-4 space-y-2">
+                {activeCategoryRecs.map((rec) => (
+                  <button
+                    key={rec.name}
+                    type="button"
+                    onClick={() => {
+                      submitChip(`Tell me about ${rec.name}`);
+                      setActiveCategory(null);
+                    }}
+                    className="group flex w-full flex-col gap-1 rounded-xl border bg-background p-4 text-left transition-all duration-150 hover:border-foreground/20 hover:bg-muted/30 hover:shadow-md active:scale-[0.99]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold leading-tight">{rec.name}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                          {rec.distance && (
+                            <span className="inline-flex items-center gap-1">
+                              <MapPin size={10} />
+                              {rec.distance}
+                            </span>
+                          )}
+                          {rec.hours && (
+                            <span className="inline-flex items-center gap-1">
+                              <Clock size={10} />
+                              {rec.hours}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span
+                        className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white transition-transform group-hover:translate-x-0.5"
+                        style={{ background: "var(--brand)" }}
+                      >
+                        Ask Ivory →
+                      </span>
+                    </div>
+                    {rec.description && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        &ldquo;{rec.description}&rdquo;
+                      </p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -466,7 +652,17 @@ export function ConciergeChat({
           </button>
         </div>
         <p className="mx-auto mt-2 max-w-2xl text-center text-[10px] text-muted-foreground">
-          Powered by <span style={{ color: "var(--brand)" }} className="font-medium">Agent Ivory</span> · Replies generated by AI — for emergencies dial 000
+          Powered by{" "}
+          <a
+            href="https://agentivory.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium underline-offset-2 transition-all hover:underline"
+            style={{ color: "var(--brand)" }}
+          >
+            Agent Ivory
+          </a>
+          {" "}· Replies generated by AI — for emergencies dial 000
         </p>
       </footer>
     </div>

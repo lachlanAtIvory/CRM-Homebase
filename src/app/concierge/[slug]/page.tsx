@@ -34,11 +34,27 @@ export default async function ConciergePage({
 
   const { data: hotel } = await supabase
     .from("concierge_hotels")
-    .select("slug, name, tagline, brand_color, logo_url, greeting, is_active")
+    .select("id, slug, name, tagline, brand_color, logo_url, greeting, is_active")
     .eq("slug", slug)
     .single();
 
   if (!hotel || !hotel.is_active) notFound();
+
+  // Pull local recs so the chat UI can show category quick-tap chips
+  const { data: local } = await supabase
+    .from("concierge_local")
+    .select("name, category, distance, hours, description, tags")
+    .eq("hotel_id", hotel.id as string)
+    .order("sort_order", { ascending: true });
+
+  const recs = (local ?? []).map((r) => ({
+    name:        r.name as string,
+    category:    (r.category as string | null) ?? null,
+    distance:    (r.distance as string | null) ?? null,
+    hours:       (r.hours as string | null) ?? null,
+    description: (r.description as string | null) ?? null,
+    tags:        Array.isArray(r.tags) ? (r.tags as string[]) : [],
+  }));
 
   return (
     <ConciergeChat
@@ -48,6 +64,7 @@ export default async function ConciergePage({
       brandColor={(hotel.brand_color as string) || "#6c4bf1"}
       logoUrl={(hotel.logo_url as string | null) ?? null}
       greeting={(hotel.greeting as string | null) ?? "Hi! I'm Ivory. Ask me anything about the hotel or the area."}
+      localRecs={recs}
     />
   );
 }
