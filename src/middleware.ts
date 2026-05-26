@@ -2,12 +2,15 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 // Public paths — accessible without auth. Includes analytics endpoints
-// because the tracking script + beacon are called from public websites.
+// because the tracking script + beacon are called from public websites,
+// and the Ivory Concierge guest-facing chat + API.
 const PUBLIC_PATHS = [
   "/login",
   "/auth/callback",
   "/api/track",
   "/track.js",
+  "/concierge",
+  "/api/concierge",
 ];
 
 export async function middleware(request: NextRequest) {

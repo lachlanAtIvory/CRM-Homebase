@@ -1,13 +1,16 @@
-import { Settings } from "lucide-react";
+import { EmailSnippets } from "./email-snippets";
 
 export default function SettingsPage() {
   return (
-    <div className="flex h-full items-center justify-center">
-      <div className="flex flex-col items-center gap-3 text-muted-foreground">
-        <Settings size={32} className="opacity-30" />
-        <p className="text-sm font-medium">Settings</p>
-        <p className="text-xs">Coming in a later phase</p>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Reusable assets for outreach + day-to-day team workflows.
+        </p>
       </div>
+
+      <EmailSnippets />
     </div>
   );
 }
