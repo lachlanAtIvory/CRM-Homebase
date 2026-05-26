@@ -40,10 +40,14 @@ export function ConciergeChat({
   const [speakReplies, setSpeakReplies] = useState(false); // speak responses aloud
   const [listening,  setListening]  = useState(false);
   const [speaking,   setSpeaking]   = useState(false);   // Maya is currently generating/playing
+  const [pendingAudio, setPendingAudio] = useState<{ url: string; messageId: string } | null>(null); // tap-to-play fallback
   const [input,      setInput]      = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Persistent <audio> element — we "unlock" it on the speaker-toggle click
+  // so iOS Safari lets us play() it later from outside a user-gesture window
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUnlockedRef = useRef<boolean>(false);
   const lastSpokenMsgIdRef = useRef<string | null>(null);
   const spokenAbortRef = useRef<AbortController | null>(null);
 
@@ -118,11 +122,12 @@ export function ConciergeChat({
     spokenAbortRef.current?.abort();
     if (audioRef.current) {
       try { audioRef.current.pause(); } catch { /* noop */ }
-      audioRef.current = null;
     }
+    setPendingAudio(null);
 
     const controller = new AbortController();
     spokenAbortRef.current = controller;
+    const messageId = last.id;
 
     (async () => {
       try {
@@ -139,17 +144,26 @@ export function ConciergeChat({
         if (controller.signal.aborted) { setSpeaking(false); return; }
 
         const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => {
-          setSpeaking(false);
-          URL.revokeObjectURL(url);
-        };
-        audio.onerror = () => {
-          setSpeaking(false);
-          URL.revokeObjectURL(url);
-        };
+
+        // Reuse the persistent (unlocked) audio element if we have one.
+        // Critical for iOS Safari — a fresh `new Audio()` is treated as
+        // outside the user-gesture window and play() rejects silently.
+        const audio = audioRef.current ?? new Audio();
         audioRef.current = audio;
-        await audio.play().catch(() => { setSpeaking(false); });
+        audio.src = url;
+        audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+        audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+
+        try {
+          await audio.play();
+          // success — autoplay went through
+        } catch {
+          // iOS blocked autoplay (or user revoked permission). Stash the
+          // audio URL so we can render a "tap to hear" chip the user can
+          // click — that satisfies the gesture requirement.
+          setSpeaking(false);
+          setPendingAudio({ url, messageId });
+        }
       } catch {
         setSpeaking(false);
       }
@@ -164,10 +178,51 @@ export function ConciergeChat({
     spokenAbortRef.current?.abort();
     if (audioRef.current) {
       try { audioRef.current.pause(); } catch { /* noop */ }
-      audioRef.current = null;
     }
+    setPendingAudio(null);
     setSpeaking(false);
   }, [speakReplies]);
+
+  /**
+   * Called when the user taps the speaker icon — this happens INSIDE a
+   * user-gesture, so we use it to "unlock" the persistent audio element
+   * (iOS Safari). After this, future play() calls work even from outside
+   * gesture windows.
+   */
+  function handleSpeakerToggle() {
+    const turningOn = !speakReplies;
+    setSpeakReplies(turningOn);
+
+    if (turningOn && !audioUnlockedRef.current) {
+      try {
+        // 0.1s of silence — tiny WAV. Plays + immediately ends, which
+        // counts as a user-initiated audio play and unlocks the element.
+        const audio = new Audio(
+          "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAVFYAAFRWAAABAAgAZGF0YQAAAAA=",
+        );
+        audio.volume = 0;
+        audio.play().then(() => {
+          audio.pause();
+          audioRef.current = audio;
+          audioUnlockedRef.current = true;
+        }).catch(() => { /* unlock failed — tap-to-play fallback will kick in */ });
+      } catch { /* noop */ }
+    }
+  }
+
+  /** Tap-to-play fallback — user gesture lets us play the queued audio */
+  function playPendingAudio() {
+    if (!pendingAudio) return;
+    const { url } = pendingAudio;
+    setPendingAudio(null);
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+    audio.src = url;
+    audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+    audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+    setSpeaking(true);
+    audio.play().catch(() => setSpeaking(false));
+  }
 
   // ── Voice input via browser SpeechRecognition ──────────────────────────────
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -266,7 +321,7 @@ export function ConciergeChat({
 
         <button
           type="button"
-          onClick={() => setSpeakReplies((s) => !s)}
+          onClick={handleSpeakerToggle}
           className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           title={speakReplies ? "Stop reading replies aloud" : "Hear replies in Maya's voice"}
           aria-label={speakReplies ? "Mute" : "Unmute"}
@@ -314,6 +369,18 @@ export function ConciergeChat({
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
               Something went wrong. Try again, or press 0 on your room phone for reception.
             </div>
+          )}
+
+          {pendingAudio && (
+            <button
+              type="button"
+              onClick={playPendingAudio}
+              className="flex items-center gap-2 self-start rounded-full px-3 py-1.5 text-xs font-medium text-white shadow-md transition-all hover:opacity-90 active:scale-[0.97] animate-in fade-in slide-in-from-left-1"
+              style={{ background: "var(--brand)" }}
+            >
+              <Volume2 size={12} />
+              Tap to hear reply
+            </button>
           )}
 
           <div ref={messagesEndRef} />
@@ -378,7 +445,9 @@ export function ConciergeChat({
             placeholder={listening ? "Listening…" : "Ask me anything…"}
             disabled={!ready || !sessionId}
             rows={1}
-            className="max-h-24 min-h-[44px] flex-1 resize-none rounded-2xl border bg-background px-4 py-3 text-sm outline-none ring-1 ring-transparent transition-all placeholder:text-muted-foreground focus:ring-2"
+            // text-base (16px) prevents iOS Safari zoom-on-focus. NEVER drop
+            // this below 16px on a mobile input.
+            className="max-h-24 min-h-[44px] flex-1 resize-none rounded-2xl border bg-background px-4 py-3 text-base outline-none ring-1 ring-transparent transition-all placeholder:text-muted-foreground focus:ring-2"
             style={{
               boxShadow: "inset 0 1px 0 rgba(0,0,0,0.02)",
               ["--tw-ring-color" as string]: "color-mix(in oklch, var(--brand) 40%, transparent)",

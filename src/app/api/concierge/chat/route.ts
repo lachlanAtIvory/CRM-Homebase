@@ -3,6 +3,7 @@ import { streamText, convertToModelMessages, type UIMessage } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createClient } from "@supabase/supabase-js";
 import { buildSystemPrompt } from "@/lib/concierge/prompt";
+import { fetchWeatherBlurb } from "@/lib/concierge/weather";
 
 /**
  * Ivory Concierge chat endpoint.
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
 
     const { data: hotel } = await supabase
       .from("concierge_hotels")
-      .select("id, slug, name, address, timezone, greeting, is_active")
+      .select("id, slug, name, address, timezone, greeting, is_active, lat, lng")
       .eq("slug", hotelSlug)
       .single();
 
@@ -46,7 +47,12 @@ export async function POST(req: NextRequest) {
       return new Response("Hotel not found", { status: 404 });
     }
 
-    const [{ data: facts }, { data: local }] = await Promise.all([
+    // Pull facts + local recs + live weather in parallel
+    const lat = hotel.lat as number | null;
+    const lng = hotel.lng as number | null;
+    const timezone = (hotel.timezone as string) || "Australia/Sydney";
+
+    const [{ data: facts }, { data: local }, weather] = await Promise.all([
       supabase
         .from("concierge_facts")
         .select("category, question, answer")
@@ -57,6 +63,7 @@ export async function POST(req: NextRequest) {
         .select("name, category, distance, hours, description, tags")
         .eq("hotel_id", hotel.id)
         .order("sort_order", { ascending: true }),
+      lat !== null && lng !== null ? fetchWeatherBlurb(lat, lng, timezone) : Promise.resolve(null),
     ]);
 
     // Ensure session exists (idempotent — upserts) and persist the latest user msg.
@@ -99,7 +106,7 @@ export async function POST(req: NextRequest) {
       hotel: {
         name:     hotel.name as string,
         address:  (hotel.address  as string | null) ?? null,
-        timezone: (hotel.timezone as string)      || "Australia/Sydney",
+        timezone,
         greeting: (hotel.greeting as string | null) ?? null,
       },
       facts: (facts ?? []) as never,
@@ -107,6 +114,7 @@ export async function POST(req: NextRequest) {
         ...r,
         tags: Array.isArray(r.tags) ? r.tags as string[] : [],
       })) as never,
+      weather,
     });
 
     const modelMessages = await convertToModelMessages(messages);

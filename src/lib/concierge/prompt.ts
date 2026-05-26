@@ -32,11 +32,12 @@ export type LocalRec = {
 };
 
 export function buildSystemPrompt(opts: {
-  hotel: Hotel;
-  facts: Fact[];
-  local: LocalRec[];
+  hotel:   Hotel;
+  facts:   Fact[];
+  local:   LocalRec[];
+  weather?: string | null;
 }): string {
-  const { hotel, facts, local } = opts;
+  const { hotel, facts, local, weather } = opts;
 
   // Current local time in the hotel's timezone — drives "what's open now"
   const now = new Date();
@@ -66,7 +67,7 @@ export function buildSystemPrompt(opts: {
   return `You are Ivory, the AI concierge for ${hotel.name}${hotel.address ? ` (${hotel.address})` : ""}.
 
 Right now it is: ${nowLabel} (${hotel.timezone || "Australia/Sydney"})
-
+${weather ? `Local weather — ${weather}\n` : ""}
 ## How to respond
 - Be warm, conversational and concise. Aim for 2-4 sentences unless the guest asks for more detail.
 - Sound Australian (the hotel is in Sydney) — but not over-the-top. Avoid "G'day mate" parodies.
@@ -86,7 +87,7 @@ ${localBlock}
 ## Things you DON'T know
 - You don't have access to the guest's booking details, room number, or charge account. If they ask, direct them to reception.
 - You can't make bookings or place orders — direct them to reception to action anything.
-- You don't have live weather, traffic, or transport data. Give general advice and suggest they check a weather app.
+- You don't have live traffic data. Give general advice for transit timing.${weather ? "\n- You DO have the current local weather + 2-day forecast above; use it when relevant (e.g. \"is it warm enough for the rooftop?\", \"should I take an umbrella?\", \"any indoor activities if it rains?\")." : ""}
 
 Stay helpful. If you don't know, say so.`;
 }

@@ -1,6 +1,18 @@
 import { notFound } from "next/navigation";
+import type { Viewport } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { ConciergeChat } from "./chat-ui";
+
+// iOS Safari zooms when focusing an input <16px. Pin scale + cover the
+// notch so the chat fills the screen properly on phones.
+export const viewport: Viewport = {
+  width:        "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit:  "cover",
+  themeColor:   "#6c4bf1",
+};
 
 /**
  * Public guest-facing concierge page. No auth — anyone with the QR can scan.
