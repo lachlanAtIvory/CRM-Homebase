@@ -13,6 +13,23 @@ const PUBLIC_PATHS = [
   "/api/concierge",
 ];
 
+// concierge.agentivory.com (and any preview subdomain that ends in it) is
+// the public-facing guest hostname. We let ALL paths through without auth
+// AND make it serve ONLY concierge content — CRM admin routes are blocked
+// here so curious visitors can't poke at /clients or /applications.
+const CONCIERGE_HOST_PATTERN = /(^|\.)concierge\.agentivory\.com$/i;
+
+// Paths that the concierge subdomain is allowed to serve. Anything else
+// returns 404 so admin routes (/clients, /applications, etc) don't bleed
+// through on that hostname.
+const CONCIERGE_ALLOWED = [
+  "/",                  // → rewritten by next.config to /concierge/ivory-suites
+  "/concierge",         // any /concierge/* path
+  "/api/concierge",     // chat + speak APIs
+  "/_next",             // bundled JS/CSS
+  "/favicon.ico",
+];
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -43,6 +60,24 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+  const host = request.headers.get("host") ?? "";
+
+  // ── concierge.agentivory.com — public guest experience only ────────────────
+  if (CONCIERGE_HOST_PATTERN.test(host)) {
+    // Reject paths that aren't concierge/asset routes. Stops curious
+    // visitors from accessing the CRM admin via this hostname.
+    const allowed = CONCIERGE_ALLOWED.some(
+      (p) => path === p || path.startsWith(`${p}/`),
+    );
+    if (!allowed) {
+      // 404 instead of redirect so it feels like the route doesn't exist
+      return new NextResponse("Not found", { status: 404 });
+    }
+    // Skip auth — guests don't have accounts
+    return response;
+  }
+
+  // ── Default (CRM) — auth required except for whitelisted public paths ────
   const isPublic = PUBLIC_PATHS.some(
     (p) => path === p || path.startsWith(`${p}/`),
   );
