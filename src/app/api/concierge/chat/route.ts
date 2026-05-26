@@ -112,7 +112,10 @@ export async function POST(req: NextRequest) {
     const modelMessages = await convertToModelMessages(messages);
 
     const result = streamText({
-      model:       anthropic("claude-3-5-sonnet-20241022"),
+      // Claude Sonnet 4.6 — current best balance of cost + quality for this
+      // use case. Switch to "claude-haiku-4-5-20251001" once we hit higher
+      // volumes (4x cheaper, still excellent for concierge work).
+      model:       anthropic("claude-sonnet-4-6"),
       system,
       messages:    modelMessages,
       temperature: 0.7,
