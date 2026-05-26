@@ -39,9 +39,13 @@ export function ConciergeChat({
   const [voiceMode,  setVoiceMode]  = useState(false);   // auto-listen + auto-speak
   const [speakReplies, setSpeakReplies] = useState(false); // speak responses aloud
   const [listening,  setListening]  = useState(false);
+  const [speaking,   setSpeaking]   = useState(false);   // Maya is currently generating/playing
   const [input,      setInput]      = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastSpokenMsgIdRef = useRef<string | null>(null);
+  const spokenAbortRef = useRef<AbortController | null>(null);
 
   // useChat (AI SDK v6) — handles streaming + message state.
   //
@@ -96,21 +100,74 @@ export function ConciergeChat({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, status]);
 
-  // Speak assistant replies aloud when the speaker toggle is on
+  // Speak assistant replies in Maya's voice (ElevenLabs) when speaker is on.
+  // Fires once per assistant message — guarded by `lastSpokenMsgIdRef` so
+  // re-renders during streaming don't trigger duplicate audio.
   useEffect(() => {
-    if (!speakReplies || typeof window === "undefined" || !window.speechSynthesis) return;
+    if (!speakReplies) return;
+    if (status !== "ready") return;
     const last = messages[messages.length - 1];
-    if (!last || last.role !== "assistant" || status !== "ready") return;
+    if (!last || last.role !== "assistant") return;
+    if (lastSpokenMsgIdRef.current === last.id) return;
     const text = messageToText(last);
-    if (!text) return;
-    try {
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.rate  = 1.05;
-      utter.pitch = 1.0;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utter);
-    } catch { /* noop */ }
+    if (!text.trim()) return;
+
+    lastSpokenMsgIdRef.current = last.id;
+
+    // Cancel any in-flight TTS + currently-playing audio
+    spokenAbortRef.current?.abort();
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch { /* noop */ }
+      audioRef.current = null;
+    }
+
+    const controller = new AbortController();
+    spokenAbortRef.current = controller;
+
+    (async () => {
+      try {
+        setSpeaking(true);
+        const res = await fetch("/api/concierge/speak", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ text }),
+          signal:  controller.signal,
+        });
+        if (!res.ok) { setSpeaking(false); return; }
+
+        const blob = await res.blob();
+        if (controller.signal.aborted) { setSpeaking(false); return; }
+
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => {
+          setSpeaking(false);
+          URL.revokeObjectURL(url);
+        };
+        audio.onerror = () => {
+          setSpeaking(false);
+          URL.revokeObjectURL(url);
+        };
+        audioRef.current = audio;
+        await audio.play().catch(() => { setSpeaking(false); });
+      } catch {
+        setSpeaking(false);
+      }
+    })();
+
+    return () => { controller.abort(); };
   }, [messages, status, speakReplies]);
+
+  // Toggling the speaker OFF cuts whatever Maya is saying mid-sentence
+  useEffect(() => {
+    if (speakReplies) return;
+    spokenAbortRef.current?.abort();
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch { /* noop */ }
+      audioRef.current = null;
+    }
+    setSpeaking(false);
+  }, [speakReplies]);
 
   // ── Voice input via browser SpeechRecognition ──────────────────────────────
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -210,11 +267,21 @@ export function ConciergeChat({
         <button
           type="button"
           onClick={() => setSpeakReplies((s) => !s)}
-          className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title={speakReplies ? "Stop reading replies aloud" : "Read replies aloud"}
+          className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          title={speakReplies ? "Stop reading replies aloud" : "Hear replies in Maya's voice"}
           aria-label={speakReplies ? "Mute" : "Unmute"}
         >
-          {speakReplies ? <Volume2 size={16} style={{ color: "var(--brand)" }} /> : <VolumeX size={16} />}
+          {speaking && (
+            <span
+              className="absolute inset-0 animate-ping rounded-full opacity-40"
+              style={{ background: "var(--brand)" }}
+            />
+          )}
+          {speakReplies ? (
+            <Volume2 size={16} className="relative" style={{ color: "var(--brand)" }} />
+          ) : (
+            <VolumeX size={16} className="relative" />
+          )}
         </button>
       </header>
 
