@@ -43,19 +43,35 @@ export function ConciergeChat({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // useChat (AI SDK v6) — handles streaming + message state
+  // useChat (AI SDK v6) — handles streaming + message state.
+  //
+  // IMPORTANT: we read sessionId / visitorId directly from sessionStorage
+  // inside the prepareSendMessagesRequest callback rather than closing over
+  // React state. The transport is created on first render where those state
+  // values are still "" (they're populated by the useEffect below), and the
+  // captured closure was sending empty strings → API returned 400 → UI
+  // showed "Something went wrong" on every message. Reading from storage
+  // at request time guarantees we always have the latest values.
   const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/concierge/chat",
-      prepareSendMessagesRequest: ({ messages, body }) => ({
-        body: {
-          messages,
-          hotelSlug,
-          sessionId,
-          visitorId,
-          ...body,
-        },
-      }),
+      prepareSendMessagesRequest: ({ messages, body }) => {
+        let sid = "";
+        let vid = "";
+        try {
+          sid = sessionStorage.getItem(`ivory-sid:${hotelSlug}`) || "";
+          vid = localStorage.getItem(`ivory-vid:${hotelSlug}`)    || "";
+        } catch { /* private mode etc */ }
+        return {
+          body: {
+            messages,
+            hotelSlug,
+            sessionId: sid,
+            visitorId: vid,
+            ...body,
+          },
+        };
+      },
     }),
   });
 
