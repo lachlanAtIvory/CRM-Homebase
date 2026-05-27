@@ -4,6 +4,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { createClient } from "@supabase/supabase-js";
 import { buildSystemPrompt } from "@/lib/concierge/prompt";
 import { fetchWeatherBlurb } from "@/lib/concierge/weather";
+import { checkRateLimits, cappedReplyFor, cappedStreamResponse } from "@/lib/concierge/limits";
 
 /**
  * Ivory Concierge chat endpoint.
@@ -14,6 +15,11 @@ import { fetchWeatherBlurb } from "@/lib/concierge/weather";
  * Edge runtime for low TTFB to the guest.
  */
 export const runtime = "edge";
+
+// ── Rate limit defaults (per-hotel caps live on the concierge_hotels row) ──
+const SESSION_DAILY_CAP = 30;   // single browser tab
+const IP_DAILY_CAP      = 100;  // single network / mobile carrier
+const HISTORY_CAP       = 20;   // keep last 10 user/assistant pairs
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     const { data: hotel } = await supabase
       .from("concierge_hotels")
-      .select("id, slug, name, address, timezone, greeting, is_active, lat, lng")
+      .select("id, slug, name, address, timezone, greeting, is_active, lat, lng, daily_conv_cap, monthly_conv_cap")
       .eq("slug", hotelSlug)
       .single();
 
@@ -47,10 +53,46 @@ export async function POST(req: NextRequest) {
       return new Response("Hotel not found", { status: 404 });
     }
 
+    const timezone     = (hotel.timezone as string) || "Australia/Sydney";
+    const ipAddress    = req.headers.get("x-forwarded-for")?.split(",")[0].trim()
+                         || req.headers.get("x-real-ip")
+                         || null;
+
+    // ── Rate-limit pre-flight (BEFORE we hit Anthropic) ─────────────────────
+    // Order: session (cheapest lookup) → hotel daily → hotel monthly → ip.
+    // If any cap is hit, stream back a polite canned reply for FREE.
+    const rateLimitHit = await checkRateLimits({
+      supabase,
+      hotelId:         hotel.id as string,
+      sessionId,
+      ipAddress,
+      perSessionDaily: SESSION_DAILY_CAP,
+      perIpDaily:      IP_DAILY_CAP,
+      hotelDailyCap:   (hotel.daily_conv_cap   as number) || 200,
+      hotelMonthlyCap: (hotel.monthly_conv_cap as number) || 1000,
+      timezone,
+    });
+    if (rateLimitHit) {
+      // Log the user's question + the canned reply so they show up in the
+      // CRM transcript and the cap reason is visible to the admin.
+      const text = cappedReplyFor(rateLimitHit.exceeded);
+      const lastUser = messages.length > 0 ? uiMessageToText(messages[messages.length - 1]) : "";
+      (async () => {
+        try {
+          if (lastUser) {
+            await supabase.from("concierge_messages").insert([
+              { session_id: sessionId, role: "user",      content: lastUser },
+              { session_id: sessionId, role: "assistant", content: `[rate-limited:${rateLimitHit.exceeded}] ${text}` },
+            ]);
+          }
+        } catch { /* noop */ }
+      })();
+      return cappedStreamResponse(text);
+    }
+
     // Pull facts + local recs + live weather in parallel
     const lat = hotel.lat as number | null;
     const lng = hotel.lng as number | null;
-    const timezone = (hotel.timezone as string) || "Australia/Sydney";
 
     const [{ data: facts }, { data: local }, weather] = await Promise.all([
       supabase
@@ -66,10 +108,9 @@ export async function POST(req: NextRequest) {
       lat !== null && lng !== null ? fetchWeatherBlurb(lat, lng, timezone) : Promise.resolve(null),
     ]);
 
-    // Ensure session exists (idempotent — upserts) and persist the latest user msg.
-    // We don't block the response on these — fire and forget so streaming starts fast.
-    const country = req.headers.get("x-vercel-ip-country") || null;
-    const userAgent = req.headers.get("user-agent")        || null;
+    // Upsert session + persist the latest user msg (fire and forget so streaming starts fast)
+    const country   = req.headers.get("x-vercel-ip-country") || null;
+    const userAgent = req.headers.get("user-agent")          || null;
 
     (async () => {
       try {
@@ -82,6 +123,7 @@ export async function POST(req: NextRequest) {
               visitor_id:   visitorId || null,
               user_agent:   userAgent,
               country,
+              ip_address:   ipAddress,
               last_seen_at: new Date().toISOString(),
             },
             { onConflict: "id" },
@@ -119,13 +161,28 @@ export async function POST(req: NextRequest) {
 
     const modelMessages = await convertToModelMessages(messages);
 
+    // Cap history so long sessions don't balloon input-token cost.
+    const capped = modelMessages.length > HISTORY_CAP
+      ? modelMessages.slice(-HISTORY_CAP)
+      : modelMessages;
+
     const result = streamText({
-      // Claude Sonnet 4.6 — current best balance of cost + quality for this
-      // use case. Switch to "claude-haiku-4-5-20251001" once we hit higher
-      // volumes (4x cheaper, still excellent for concierge work).
-      model:       anthropic("claude-sonnet-4-6"),
-      system,
-      messages:    modelMessages,
+      // Haiku 4.5 — 4x cheaper than Sonnet, excellent for concierge work
+      // (short answers, follow facts, no complex reasoning needed).
+      model:       anthropic("claude-haiku-4-5-20251001"),
+      messages: [
+        // System message wrapped with Anthropic prompt caching so the
+        // 3000-token block of hotel facts + local recs + weather is
+        // billed at 10% on every reply within 5 min. Major cost win.
+        {
+          role:    "system",
+          content: system,
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral" } },
+          },
+        },
+        ...capped,
+      ],
       temperature: 0.7,
       // Save the assistant message once streaming completes
       onFinish: async ({ text }) => {

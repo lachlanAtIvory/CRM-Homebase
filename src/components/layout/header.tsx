@@ -19,16 +19,17 @@ import { signOut } from "@/lib/actions";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 
 const PAGE_TITLES: Record<string, string> = {
-  "/":                "Home",
-  "/pipeline":        "Pipeline",
-  "/clients":         "Clients",
-  "/applications":    "Applications",
-  "/tasks":           "Tasks",
-  "/analytics":       "Analytics",
-  "/agents":          "Agents",
-  "/calendar":        "Calendar",
-  "/settings":        "Settings",
-  "/application/new": "Launch Application",
+  "/":                 "Home",
+  "/pipeline":         "Pipeline",
+  "/clients":          "Clients",
+  "/applications":     "Applications",
+  "/tasks":            "Tasks",
+  "/analytics":        "Analytics",
+  "/concierge-usage":  "Concierge Usage",
+  "/agents":           "Agents",
+  "/calendar":         "Calendar",
+  "/settings":         "Settings",
+  "/application/new":  "Launch Application",
 };
 
 interface HeaderProps {

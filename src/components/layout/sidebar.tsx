@@ -13,21 +13,23 @@ import {
   Bot,
   CalendarDays,
   BarChart3,
+  Hotel,
   Settings,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
 
 const NAV = [
-  { href: "/",             label: "Home",         icon: LayoutDashboard },
-  { href: "/pipeline",     label: "Pipeline",     icon: Kanban          },
-  { href: "/clients",      label: "Clients",      icon: Users           },
-  { href: "/applications", label: "Applications", icon: FileText        },
-  { href: "/tasks",        label: "Tasks",        icon: ListTodo        },
-  { href: "/analytics",    label: "Analytics",    icon: BarChart3       },
-  { href: "/agents",       label: "Agents",       icon: Bot             },
-  { href: "/calendar",     label: "Calendar",     icon: CalendarDays    },
-  { href: "/settings",     label: "Settings",     icon: Settings        },
+  { href: "/",                label: "Home",            icon: LayoutDashboard },
+  { href: "/pipeline",        label: "Pipeline",        icon: Kanban          },
+  { href: "/clients",         label: "Clients",         icon: Users           },
+  { href: "/applications",    label: "Applications",    icon: FileText        },
+  { href: "/tasks",           label: "Tasks",           icon: ListTodo        },
+  { href: "/analytics",       label: "Analytics",       icon: BarChart3       },
+  { href: "/concierge-usage", label: "Concierge",       icon: Hotel           },
+  { href: "/agents",          label: "Agents",          icon: Bot             },
+  { href: "/calendar",        label: "Calendar",        icon: CalendarDays    },
+  { href: "/settings",        label: "Settings",        icon: Settings        },
 ] as const;
 
 export function Sidebar() {
