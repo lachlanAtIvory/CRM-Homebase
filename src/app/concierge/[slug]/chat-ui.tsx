@@ -83,7 +83,6 @@ export function ConciergeChat({
   // Splash → chat handshake. Required for iOS audio unlock; doubles as a
   // moment of polish that makes the bot feel like a real product loading.
   const [started, setStarted] = useState(false);
-  const [splashAudio, setSplashAudio] = useState<{ playing: boolean }>({ playing: false });
   // Per-browser identifiers so we can attribute conversations to a session
   const [sessionId,  setSessionId]  = useState<string>("");
   const [visitorId,  setVisitorId]  = useState<string>("");
@@ -112,6 +111,11 @@ export function ConciergeChat({
   const audioUnlockedRef = useRef<boolean>(false);
   const lastSpokenMsgIdRef = useRef<string | null>(null);
   const spokenAbortRef = useRef<AbortController | null>(null);
+  // SYNCHRONOUS guard so double-tapping the splash CTA can't fire the
+  // greeting fetch + audio play twice (was the cause of layered Maya audio).
+  // We use a ref not state because state updates aren't applied within the
+  // same event handler — two rapid taps see the same `started === false`.
+  const splashStartedRef = useRef<boolean>(false);
 
   // useChat (AI SDK v6) — handles streaming + message state.
   //
@@ -366,56 +370,66 @@ export function ConciergeChat({
 
   /**
    * Splash-screen "Start chatting" — three things in one tap:
-   * 1. Unlock the audio context (iOS won't let us play() without a gesture)
-   * 2. Auto-speak the greeting in Maya's voice (the demo wow moment)
-   * 3. Reveal the chat
+   *   1. Unlock the audio context (iOS won't let us play() without a gesture)
+   *   2. Auto-speak the greeting in Maya's voice (the demo wow moment)
+   *   3. Reveal the chat
+   *
+   * CRITICAL behaviour:
+   * - Returns IMMEDIATELY (no awaited work in the click path) so the
+   *   splash → chat transition is instant. Slow iOS Audio.play() unlocks
+   *   used to make this feel frozen → user tapped again → audio layered.
+   * - Synchronous ref guard prevents double-tap from firing the TTS twice.
    */
-  async function handleSplashStart() {
+  function handleSplashStart() {
+    if (splashStartedRef.current) return;  // synchronous dedupe
+    splashStartedRef.current = true;
+
     haptic(15);
-    setSpeakReplies(true);  // turn on speaker by default — they tapped, they want voice
+    setStarted(true);          // → reveal chat on the next render, FIRST
+    setSpeakReplies(true);     // speaker on by default (they tapped, they want voice)
     audioUnlockedRef.current = true;
 
-    // Unlock audio first (synchronous, must happen INSIDE the click handler)
-    const audio = new Audio();
-    audioRef.current = audio;
-    try {
-      // Pre-warm with a silent buffer
-      audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAVFYAAFRWAAABAAgAZGF0YQAAAAA=";
-      audio.volume = 0;
-      await audio.play();
-      audio.pause();
-    } catch { /* unlock failed — tap-to-play fallback covers us */ }
-
-    setStarted(true);
-
-    // Fire-and-forget: fetch Maya's voice for the greeting and play it
+    // All audio work runs off the critical path so the UI updates instantly.
     (async () => {
+      const audio = audioRef.current ?? new Audio();
+      audioRef.current = audio;
+
+      // 1. Unlock with a silent buffer (iOS requires a play() in the same
+      //    tick as the user gesture; we're still in the post-click microtask).
       try {
-        setSplashAudio({ playing: true });
+        audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAVFYAAFRWAAABAAgAZGF0YQAAAAA=";
+        audio.volume = 0;
+        await audio.play();
+        audio.pause();
+      } catch { /* unlock failed — tap-to-play fallback covers us */ }
+
+      // 2. Fetch Maya's voice for the greeting + play through the SAME
+      //    audio element (which is now unlocked). Using one element
+      //    means even if something race-conditions, we can't get layered
+      //    playback — a new `.src` assignment supersedes the old stream.
+      try {
         setSpeaking(true);
         const res = await fetch("/api/concierge/speak", {
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body:    JSON.stringify({ text: greeting }),
         });
-        if (!res.ok) {
-          setSpeaking(false);
-          setSplashAudio({ playing: false });
-          return;
-        }
+        if (!res.ok) { setSpeaking(false); return; }
+
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        audio.src = url;
+        const url  = URL.createObjectURL(blob);
+
+        // Stop whatever the unlock audio is doing first
+        try { audio.pause(); } catch { /* noop */ }
+        audio.src    = url;
         audio.volume = 1;
         audio.onended = () => {
           setSpeaking(false);
-          setSplashAudio({ playing: false });
           URL.revokeObjectURL(url);
           haptic(5);
         };
         audio.onerror = () => {
           setSpeaking(false);
-          setSplashAudio({ playing: false });
           URL.revokeObjectURL(url);
         };
         await audio.play();
@@ -423,7 +437,6 @@ export function ConciergeChat({
         lastSpokenMsgIdRef.current = "splash-greeting";
       } catch {
         setSpeaking(false);
-        setSplashAudio({ playing: false });
       }
     })();
   }
