@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import type { Viewport } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { ConciergeChat } from "./chat-ui";
+import { fetchWeatherBlurb } from "@/lib/concierge/weather";
+import { buildSmartGreeting } from "@/lib/concierge/greeting";
 
 // iOS Safari zooms when focusing an input <16px. Pin scale + cover the
 // notch so the chat fills the screen properly on phones.
@@ -16,7 +18,12 @@ export const viewport: Viewport = {
 
 /**
  * Public guest-facing concierge page. No auth — anyone with the QR can scan.
- * Server component loads hotel + a few quick-tap prompts to seed the UI.
+ *
+ * Server component does as much as possible up-front:
+ *   - Loads hotel + local recs
+ *   - Fetches current weather (cached 10min via Open-Meteo)
+ *   - Composes a smart time-of-day + weather-aware greeting and starters
+ * → every scan feels alive and contextual, not the same canned welcome.
  */
 export default async function ConciergePage({
   params,
@@ -34,18 +41,25 @@ export default async function ConciergePage({
 
   const { data: hotel } = await supabase
     .from("concierge_hotels")
-    .select("id, slug, name, tagline, brand_color, logo_url, greeting, is_active")
+    .select("id, slug, name, tagline, brand_color, logo_url, greeting, address, timezone, lat, lng, is_active")
     .eq("slug", slug)
     .single();
 
   if (!hotel || !hotel.is_active) notFound();
 
-  // Pull local recs so the chat UI can show category quick-tap chips
-  const { data: local } = await supabase
-    .from("concierge_local")
-    .select("name, category, distance, hours, description, tags")
-    .eq("hotel_id", hotel.id as string)
-    .order("sort_order", { ascending: true });
+  // Pull local recs + current weather in parallel
+  const lat = hotel.lat as number | null;
+  const lng = hotel.lng as number | null;
+  const timezone = (hotel.timezone as string) || "Australia/Sydney";
+
+  const [{ data: local }, weather] = await Promise.all([
+    supabase
+      .from("concierge_local")
+      .select("name, category, distance, hours, description, tags")
+      .eq("hotel_id", hotel.id as string)
+      .order("sort_order", { ascending: true }),
+    lat !== null && lng !== null ? fetchWeatherBlurb(lat, lng, timezone) : Promise.resolve(null),
+  ]);
 
   const recs = (local ?? []).map((r) => ({
     name:        r.name as string,
@@ -56,6 +70,13 @@ export default async function ConciergePage({
     tags:        Array.isArray(r.tags) ? (r.tags as string[]) : [],
   }));
 
+  // Compose smart greeting + starter chips based on time + weather
+  const smart = buildSmartGreeting({
+    hotelName: hotel.name as string,
+    timezone,
+    weather,
+  });
+
   return (
     <ConciergeChat
       hotelSlug={hotel.slug as string}
@@ -63,7 +84,9 @@ export default async function ConciergePage({
       tagline={(hotel.tagline as string | null) ?? null}
       brandColor={(hotel.brand_color as string) || "#6c4bf1"}
       logoUrl={(hotel.logo_url as string | null) ?? null}
-      greeting={(hotel.greeting as string | null) ?? "Hi! I'm Ivory. Ask me anything about the hotel or the area."}
+      hotelAddress={(hotel.address as string | null) ?? null}
+      greeting={smart.greeting}
+      starterPrompts={smart.starters}
       localRecs={recs}
     />
   );

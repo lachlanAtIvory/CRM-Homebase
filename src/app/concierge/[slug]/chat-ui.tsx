@@ -3,7 +3,7 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Send, Sparkles, Volume2, VolumeX, Loader2, X, UtensilsCrossed, Coffee, Beer, Eye, Trees, Clock, MapPin } from "lucide-react";
+import { Mic, MicOff, Send, Sparkles, Volume2, VolumeX, Loader2, X, UtensilsCrossed, Coffee, Beer, Eye, Trees, Clock, MapPin, Navigation, Share2, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type LocalRec = {
@@ -16,13 +16,15 @@ type LocalRec = {
 };
 
 type Props = {
-  hotelSlug:  string;
-  hotelName:  string;
-  tagline:    string | null;
-  brandColor: string;
-  logoUrl:    string | null;
-  greeting:   string;
-  localRecs:  LocalRec[];
+  hotelSlug:      string;
+  hotelName:      string;
+  tagline:        string | null;
+  brandColor:     string;
+  logoUrl:        string | null;
+  hotelAddress:   string | null;
+  greeting:       string;
+  starterPrompts: string[];
+  localRecs:      LocalRec[];
 };
 
 // Categories surfaced as quick-tap icons. Each has a matcher run against
@@ -60,14 +62,13 @@ const CATEGORIES: {
   },
 ];
 
-// Quick-tap chips guests see before typing. Chosen to showcase the bot's strengths.
-const QUICK_PROMPTS = [
-  "What time is checkout?",
-  "What's the WiFi password?",
-  "Where should I eat tonight?",
-  "Is the gym open right now?",
-  "How do I get to the harbour?",
-  "Recommend a coffee spot",
+// Generic follow-up chips that surface after every assistant reply — keeps
+// the conversation flowing without having to think of the next question.
+const FOLLOWUP_CHIPS = [
+  "What else is nearby?",
+  "Something cheaper?",
+  "What's open right now?",
+  "Best for tonight?",
 ] as const;
 
 function randomId(): string {
@@ -77,8 +78,12 @@ function randomId(): string {
 }
 
 export function ConciergeChat({
-  hotelSlug, hotelName, tagline, brandColor, logoUrl, greeting, localRecs,
+  hotelSlug, hotelName, tagline, brandColor, logoUrl, hotelAddress, greeting, starterPrompts, localRecs,
 }: Props) {
+  // Splash → chat handshake. Required for iOS audio unlock; doubles as a
+  // moment of polish that makes the bot feel like a real product loading.
+  const [started, setStarted] = useState(false);
+  const [splashAudio, setSplashAudio] = useState<{ playing: boolean }>({ playing: false });
   // Per-browser identifiers so we can attribute conversations to a session
   const [sessionId,  setSessionId]  = useState<string>("");
   const [visitorId,  setVisitorId]  = useState<string>("");
@@ -161,6 +166,15 @@ export function ConciergeChat({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, status]);
 
+  // Tiny haptic when a streamed text reply finishes (separate from Maya audio)
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    if (prevStatusRef.current === "streaming" && status === "ready") {
+      try { navigator.vibrate?.(4); } catch { /* noop */ }
+    }
+    prevStatusRef.current = status;
+  }, [status]);
+
   // Speak assistant replies in Maya's voice (ElevenLabs) when speaker is on.
   // Fires once per assistant message — guarded by `lastSpokenMsgIdRef` so
   // re-renders during streaming don't trigger duplicate audio.
@@ -208,7 +222,12 @@ export function ConciergeChat({
         const audio = audioRef.current ?? new Audio();
         audioRef.current = audio;
         audio.src = url;
-        audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+        audio.onended = () => {
+          setSpeaking(false);
+          URL.revokeObjectURL(url);
+          // Tiny haptic tick when Maya finishes — closes the loop
+          try { navigator.vibrate?.(5); } catch { /* noop */ }
+        };
         audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
 
         try {
@@ -334,18 +353,208 @@ export function ConciergeChat({
   function submit() {
     const text = input.trim();
     if (!text) return;
+    haptic(8);                // micro-tactile send confirmation
     sendMessage({ text });
     setInput("");
   }
 
   function submitChip(text: string) {
+    haptic(8);
     setInput("");
     sendMessage({ text });
+  }
+
+  /**
+   * Splash-screen "Start chatting" — three things in one tap:
+   * 1. Unlock the audio context (iOS won't let us play() without a gesture)
+   * 2. Auto-speak the greeting in Maya's voice (the demo wow moment)
+   * 3. Reveal the chat
+   */
+  async function handleSplashStart() {
+    haptic(15);
+    setSpeakReplies(true);  // turn on speaker by default — they tapped, they want voice
+    audioUnlockedRef.current = true;
+
+    // Unlock audio first (synchronous, must happen INSIDE the click handler)
+    const audio = new Audio();
+    audioRef.current = audio;
+    try {
+      // Pre-warm with a silent buffer
+      audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAVFYAAFRWAAABAAgAZGF0YQAAAAA=";
+      audio.volume = 0;
+      await audio.play();
+      audio.pause();
+    } catch { /* unlock failed — tap-to-play fallback covers us */ }
+
+    setStarted(true);
+
+    // Fire-and-forget: fetch Maya's voice for the greeting and play it
+    (async () => {
+      try {
+        setSplashAudio({ playing: true });
+        setSpeaking(true);
+        const res = await fetch("/api/concierge/speak", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ text: greeting }),
+        });
+        if (!res.ok) {
+          setSpeaking(false);
+          setSplashAudio({ playing: false });
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        audio.src = url;
+        audio.volume = 1;
+        audio.onended = () => {
+          setSpeaking(false);
+          setSplashAudio({ playing: false });
+          URL.revokeObjectURL(url);
+          haptic(5);
+        };
+        audio.onerror = () => {
+          setSpeaking(false);
+          setSplashAudio({ playing: false });
+          URL.revokeObjectURL(url);
+        };
+        await audio.play();
+        // Mark this greeting as already-spoken so the speak effect doesn't re-fire
+        lastSpokenMsgIdRef.current = "splash-greeting";
+      } catch {
+        setSpeaking(false);
+        setSplashAudio({ playing: false });
+      }
+    })();
+  }
+
+  /** Wrap navigator.vibrate so it fails silently on browsers without it (most desktops) */
+  function haptic(ms: number) {
+    try {
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+        navigator.vibrate(ms);
+      }
+    } catch { /* noop */ }
+  }
+
+  /** Build a Google/Apple Maps directions URL from the hotel to a place */
+  function directionsUrl(placeName: string): string {
+    const dest = [placeName, hotelAddress].filter(Boolean).join(", ");
+    return `https://www.google.com/maps/dir/?api=1&travelmode=walking&destination=${encodeURIComponent(dest)}`;
+  }
+
+  /** Trigger the native share sheet (or fall back to copying the URL) */
+  async function sharePlace(placeName: string) {
+    haptic(8);
+    const url  = directionsUrl(placeName);
+    const text = `${placeName} — recommended by Ivory at ${hotelName}`;
+    try {
+      if (typeof navigator !== "undefined" && "share" in navigator) {
+        await navigator.share({ title: placeName, text, url });
+        return;
+      }
+    } catch { /* user dismissed — that's fine */ }
+    // Fallback — copy
+    try { await navigator.clipboard.writeText(`${text}\n${url}`); } catch { /* noop */ }
+  }
+
+  /** Find local-rec names mentioned in an assistant message (case-insensitive) */
+  function findMentionedPlaces(text: string): LocalRec[] {
+    if (!text || localRecs.length === 0) return [];
+    const lower = text.toLowerCase();
+    return localRecs.filter((r) => lower.includes(r.name.toLowerCase()));
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const ready = status === "ready" || status === "submitted";
   const streaming = status === "streaming";
+
+  // ── SPLASH ────────────────────────────────────────────────────────────────
+  // Shown until the guest taps to start. Resolves the iOS-autoplay problem
+  // (we get a real user gesture) AND gives the bot a polished launch moment.
+  if (!started) {
+    return (
+      <div
+        className="flex h-dvh flex-col items-center justify-center bg-gradient-to-br from-background via-background to-muted/30 px-6"
+        style={{ ["--brand" as string]: brandColor }}
+      >
+        <div className="flex w-full max-w-sm flex-col items-center text-center animate-in fade-in duration-500">
+          {/* Logo / initial */}
+          <div className="relative mb-6 animate-in zoom-in-50 duration-700">
+            <span
+              className="absolute inset-0 animate-ping rounded-full opacity-40"
+              style={{ background: "var(--brand)", animationDuration: "2.4s" }}
+            />
+            {logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={logoUrl}
+                alt={hotelName}
+                className="relative h-20 w-20 rounded-3xl object-cover shadow-2xl"
+                style={{ boxShadow: "0 16px 48px -12px color-mix(in oklch, var(--brand) 50%, transparent)" }}
+              />
+            ) : (
+              <div
+                className="relative flex h-20 w-20 items-center justify-center rounded-3xl text-3xl font-bold text-white shadow-2xl"
+                style={{
+                  background: "var(--brand)",
+                  boxShadow:  "0 16px 48px -12px color-mix(in oklch, var(--brand) 50%, transparent)",
+                }}
+              >
+                {hotelName.charAt(0)}
+              </div>
+            )}
+          </div>
+
+          <h1 className="mb-2 text-xl font-semibold tracking-tight animate-in fade-in slide-in-from-bottom-2 duration-500" style={{ animationDelay: "200ms", animationFillMode: "backwards" }}>
+            {hotelName}
+          </h1>
+          {tagline && (
+            <p className="mb-1 text-xs text-muted-foreground animate-in fade-in slide-in-from-bottom-2 duration-500" style={{ animationDelay: "280ms", animationFillMode: "backwards" }}>
+              {tagline}
+            </p>
+          )}
+          <div className="mt-1 flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground animate-in fade-in duration-500" style={{ animationDelay: "360ms", animationFillMode: "backwards" }}>
+            <Sparkles size={10} style={{ color: "var(--brand)" }} />
+            Ivory Concierge
+          </div>
+
+          <p className="mt-8 max-w-xs text-sm text-foreground/80 animate-in fade-in slide-in-from-bottom-3 duration-500" style={{ animationDelay: "440ms", animationFillMode: "backwards" }}>
+            Your 24/7 in-room concierge. Ask anything — opening hours, food, things to do.
+          </p>
+
+          <button
+            type="button"
+            onClick={handleSplashStart}
+            className="group mt-8 inline-flex items-center gap-2 rounded-full px-7 py-3.5 text-sm font-semibold text-white shadow-xl transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] animate-in fade-in slide-in-from-bottom-4 duration-500"
+            style={{
+              background: "var(--brand)",
+              boxShadow:  "0 16px 40px -8px color-mix(in oklch, var(--brand) 60%, transparent)",
+              animationDelay:   "560ms",
+              animationFillMode: "backwards",
+            }}
+          >
+            <Sparkles size={14} className="transition-transform duration-300 group-hover:rotate-12" />
+            Tap to start chatting
+            <ArrowRight size={14} className="transition-transform duration-200 group-hover:translate-x-0.5" />
+          </button>
+
+          <p className="mt-6 text-[10px] text-muted-foreground/70 animate-in fade-in duration-500" style={{ animationDelay: "700ms", animationFillMode: "backwards" }}>
+            Powered by{" "}
+            <a
+              href="https://agentivory.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium underline-offset-2 hover:underline"
+              style={{ color: "var(--brand)" }}
+            >
+              Agent Ivory
+            </a>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -403,13 +612,71 @@ export function ConciergeChat({
           {/* Greeting */}
           <AssistantBubble brandColor={brandColor} text={greeting} fresh={messages.length === 0} />
 
-          {messages.map((m) =>
-            m.role === "user" ? (
-              <UserBubble key={m.id} brandColor={brandColor} text={messageToText(m)} />
-            ) : (
-              <AssistantBubble key={m.id} brandColor={brandColor} text={messageToText(m)} />
-            ),
-          )}
+          {messages.map((m, i) => {
+            if (m.role === "user") {
+              return <UserBubble key={m.id} brandColor={brandColor} text={messageToText(m)} />;
+            }
+            const text = messageToText(m);
+            const isLastAssistant = i === messages.length - 1;
+            const stillStreaming  = isLastAssistant && streaming;
+            const places = !stillStreaming ? findMentionedPlaces(text) : [];
+            return (
+              <div key={m.id} className="space-y-2">
+                <AssistantBubble brandColor={brandColor} text={text} />
+                {/* Action buttons for each mentioned local rec */}
+                {places.length > 0 && (
+                  <div className="ml-9 flex flex-wrap gap-1.5 animate-in fade-in slide-in-from-left-1 duration-300">
+                    {places.map((place) => (
+                      <div
+                        key={place.name}
+                        className="inline-flex items-center gap-1 rounded-full border bg-background pr-1 shadow-sm"
+                      >
+                        <span className="px-2.5 py-1 text-[11px] font-medium">
+                          {place.name}
+                        </span>
+                        <a
+                          href={directionsUrl(place.name)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => haptic(8)}
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          title="Get directions"
+                          aria-label={`Directions to ${place.name}`}
+                        >
+                          <Navigation size={12} />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => sharePlace(place.name)}
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          title="Share"
+                          aria-label={`Share ${place.name}`}
+                        >
+                          <Share2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Follow-up chips on the LAST finished assistant message */}
+                {isLastAssistant && !stillStreaming && (
+                  <div className="ml-9 flex flex-wrap gap-1.5 animate-in fade-in slide-in-from-left-1 duration-500" style={{ animationDelay: "200ms", animationFillMode: "backwards" }}>
+                    {FOLLOWUP_CHIPS.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => submitChip(chip)}
+                        disabled={!ready || !sessionId}
+                        className="rounded-full border bg-background/50 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-all hover:border-foreground/20 hover:bg-muted/40 hover:text-foreground active:scale-[0.97] disabled:opacity-50"
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {streaming && (
             <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground animate-in fade-in slide-in-from-left-2">
@@ -444,11 +711,12 @@ export function ConciergeChat({
         </div>
       </main>
 
-      {/* ── Quick chips — only shown before the first message ── */}
-      {messages.length === 0 && (
+      {/* ── Smart starter chips — only shown before the first message.
+            Generated server-side based on current time of day + weather. ── */}
+      {messages.length === 0 && starterPrompts.length > 0 && (
         <div className="shrink-0 overflow-x-auto border-t bg-card/60 px-3 py-3 sm:px-6">
           <div className="mx-auto flex max-w-2xl flex-wrap gap-2">
-            {QUICK_PROMPTS.map((p) => (
+            {starterPrompts.map((p) => (
               <button
                 key={p}
                 type="button"
