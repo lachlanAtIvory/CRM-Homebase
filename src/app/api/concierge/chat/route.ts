@@ -94,7 +94,13 @@ export async function POST(req: NextRequest) {
     const lat = hotel.lat as number | null;
     const lng = hotel.lng as number | null;
 
-    const [{ data: facts }, { data: local }, weather] = await Promise.all([
+    // Detect if the user is asking for a search (e.g. "Italian restaurants", "coffee nearby")
+    // so we can call Google Places API to augment our curated recs
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const userQuery = lastUserMsg ? uiMessageToText(lastUserMsg) : "";
+    const isSearchQuery = /\b(find|where|best|recommend|any|good|italian|japanese|thai|mexican|coffee|cafe|restaurant|bar|pub|museum|activity|things? to do|shop|mall|market|park|gym|spa)\b/i.test(userQuery);
+
+    const [{ data: facts }, { data: local }, weather, searchResults] = await Promise.all([
       supabase
         .from("concierge_facts")
         .select("category, question, answer")
@@ -106,6 +112,17 @@ export async function POST(req: NextRequest) {
         .eq("hotel_id", hotel.id)
         .order("sort_order", { ascending: true }),
       lat !== null && lng !== null ? fetchWeatherBlurb(lat, lng, timezone) : Promise.resolve(null),
+      // If the user is asking for a search, call Google Places API
+      isSearchQuery && lat !== null && lng !== null
+        ? fetch(
+            new URL(
+              `/api/concierge/places?q=${encodeURIComponent(userQuery)}&slug=${hotelSlug}&lat=${lat}&lng=${lng}`,
+              req.url
+            ).href
+          )
+            .then((res) => res.json() as Promise<{ results?: Array<{ name: string; type: string; distance: string; rating?: number }> }>)
+            .catch(() => ({ results: [] }))
+        : Promise.resolve({ results: [] }),
     ]);
 
     // Upsert session + persist the latest user msg (fire and forget so streaming starts fast)
@@ -144,6 +161,23 @@ export async function POST(req: NextRequest) {
     })();
 
     // ── Build the system prompt + call Claude ────────────────────────────────
+    // Augment local recs with Google Places search results if available
+    const augmentedLocal = [
+      ...(local ?? []).map((r) => ({
+        ...r,
+        tags: Array.isArray(r.tags) ? r.tags as string[] : [],
+      })),
+      // Add Google Places results as additional recommendations
+      ...(searchResults?.results ?? []).map((p: { name: string; type: string; distance: string; rating?: number }) => ({
+        name:        p.name,
+        category:    p.type,
+        distance:    p.distance,
+        hours:       null,
+        description: p.rating ? `Rating: ${p.rating}/5` : null,
+        tags:        [],
+      })),
+    ];
+
     const system = buildSystemPrompt({
       hotel: {
         name:     hotel.name as string,
@@ -152,10 +186,7 @@ export async function POST(req: NextRequest) {
         greeting: (hotel.greeting as string | null) ?? null,
       },
       facts: (facts ?? []) as never,
-      local: (local ?? []).map((r) => ({
-        ...r,
-        tags: Array.isArray(r.tags) ? r.tags as string[] : [],
-      })) as never,
+      local: augmentedLocal as never,
       weather,
     });
 
