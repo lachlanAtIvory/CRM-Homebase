@@ -19,15 +19,23 @@ const PUBLIC_PATHS = [
 // here so curious visitors can't poke at /clients or /applications.
 const CONCIERGE_HOST_PATTERN = /(^|\.)concierge\.agentivory\.com$/i;
 
-// Paths that the concierge subdomain is allowed to serve. Anything else
-// returns 404 so admin routes (/clients, /applications, etc) don't bleed
-// through on that hostname.
-const CONCIERGE_ALLOWED = [
-  "/",                  // → rewritten by next.config to /concierge/ivory-suites
-  "/concierge",         // any /concierge/* path
-  "/api/concierge",     // chat + speak APIs
-  "/_next",             // bundled JS/CSS
-  "/favicon.ico",
+// Paths that CRM admin uses — these are explicitly blocked on the public
+// concierge hostname so visitors can't poke admin pages. Everything else
+// is allowed through (which is necessary because next.config rewrites
+// /:slug → /concierge/:slug AFTER middleware runs).
+const CONCIERGE_BLOCKED = [
+  "/clients",
+  "/applications",
+  "/application",       // covers /application/new + /application/[id]
+  "/pipeline",
+  "/analytics",
+  "/agents",
+  "/calendar",
+  "/settings",
+  "/tasks",
+  "/concierge-usage",
+  "/login",
+  "/auth",
 ];
 
 export async function middleware(request: NextRequest) {
@@ -64,16 +72,19 @@ export async function middleware(request: NextRequest) {
 
   // ── concierge.agentivory.com — public guest experience only ────────────────
   if (CONCIERGE_HOST_PATTERN.test(host)) {
-    // Reject paths that aren't concierge/asset routes. Stops curious
-    // visitors from accessing the CRM admin via this hostname.
-    const allowed = CONCIERGE_ALLOWED.some(
+    // Block CRM admin paths so they don't bleed through on this hostname.
+    // We use a blocklist (not allowlist) because next.config rewrites
+    // /:slug → /concierge/:slug AFTER middleware — at this point we can't
+    // tell `/ivory-suites` (valid hotel slug) from a CRM route.
+    const blocked = CONCIERGE_BLOCKED.some(
       (p) => path === p || path.startsWith(`${p}/`),
     );
-    if (!allowed) {
+    if (blocked) {
       // 404 instead of redirect so it feels like the route doesn't exist
       return new NextResponse("Not found", { status: 404 });
     }
-    // Skip auth — guests don't have accounts
+    // Skip auth — guests don't have accounts; let rewrite + page routing
+    // handle invalid slugs naturally (notFound() in the page → 404)
     return response;
   }
 
