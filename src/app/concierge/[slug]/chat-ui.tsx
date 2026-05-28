@@ -186,6 +186,51 @@ export function ConciergeChat({
     }
   }, [hotelSlug]);
 
+  // Load chat history from the database for returning guests
+  const [history, setHistory] = useState<Array<{ id: string; role: "user" | "assistant"; content: string }>>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!sessionId || historyLoaded) return;
+
+    (async () => {
+      try {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        if (!supabaseUrl || !supabaseKey) return;
+
+        const response = await fetch(
+          `${supabaseUrl}/rest/v1/concierge_messages?session_id=eq.${sessionId}&order=created_at.asc&limit=100`,
+          {
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+            },
+          }
+        );
+
+        if (!response.ok) return;
+
+        const dbMessages = (await response.json()) as Array<{
+          role: "user" | "assistant";
+          content: string;
+        }>;
+
+        const historyMsgs = dbMessages.map((m, i) => ({
+          id: `history-${i}`,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
+
+        setHistory(historyMsgs);
+      } catch (e) {
+        console.error("Failed to load history:", e);
+      } finally {
+        setHistoryLoaded(true);
+      }
+    })();
+  }, [sessionId, historyLoaded]);
+
   // Auto-scroll to bottom when new content arrives
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -643,15 +688,19 @@ export function ConciergeChat({
       {/* ── Messages ─── */}
       <main className="flex-1 overflow-y-auto px-3 py-4 sm:px-6">
         <div className="mx-auto max-w-2xl space-y-3">
-          {/* Greeting */}
-          <AssistantBubble brandColor={brandColor} text={greeting} fresh={messages.length === 0} />
+          {/* Greeting — only show if no history and no current messages */}
+          {history.length === 0 && messages.length === 0 && (
+            <AssistantBubble brandColor={brandColor} text={greeting} fresh />
+          )}
 
-          {messages.map((m, i) => {
+          {/* Render restored history + current messages together */}
+          {[...history, ...messages].map((m, i) => {
             if (m.role === "user") {
               return <UserBubble key={m.id} brandColor={brandColor} text={messageToText(m)} />;
             }
             const text = messageToText(m);
-            const isLastAssistant = i === messages.length - 1;
+            const allMsgs = [...history, ...messages];
+            const isLastAssistant = i === allMsgs.length - 1;
             const stillStreaming  = isLastAssistant && streaming;
             const places = !stillStreaming ? findMentionedPlaces(text) : [];
             return (
@@ -747,7 +796,7 @@ export function ConciergeChat({
 
       {/* ── Smart starter chips — only shown before the first message.
             Generated server-side based on current time of day + weather. ── */}
-      {messages.length === 0 && starterPrompts.length > 0 && (
+      {messages.length === 0 && history.length === 0 && starterPrompts.length > 0 && (
         <div className="shrink-0 overflow-x-auto border-t bg-card/60 px-3 py-3 sm:px-6">
           <div className="mx-auto flex max-w-2xl flex-wrap gap-2">
             {starterPrompts.map((p) => (
