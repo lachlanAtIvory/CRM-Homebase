@@ -119,7 +119,7 @@ export function ConciergeChat({
 
   // useChat (AI SDK v6) — handles streaming + message state.
   //
-  // IMPORTANT: we read sessionId / visitorId directly from sessionStorage
+  // IMPORTANT: we read sessionId / visitorId directly from localStorage
   // inside the prepareSendMessagesRequest callback rather than closing over
   // React state. The transport is created on first render where those state
   // values are still "" (they're populated by the useEffect below), and the
@@ -133,8 +133,8 @@ export function ConciergeChat({
         let sid = "";
         let vid = "";
         try {
-          sid = sessionStorage.getItem(`ivory-sid:${hotelSlug}`) || "";
-          vid = localStorage.getItem(`ivory-vid:${hotelSlug}`)    || "";
+          sid = localStorage.getItem(`ivory-sid:${hotelSlug}`) || "";
+          vid = localStorage.getItem(`ivory-vid:${hotelSlug}`)  || "";
         } catch { /* private mode etc */ }
         return {
           body: {
@@ -150,10 +150,31 @@ export function ConciergeChat({
   });
 
   // Initialise session + visitor IDs from storage
+  // Sessions persist on the device for 24 hours, allowing guests to resume conversations
+  // If they close the browser and come back within 24h, they get the same session ID
   useEffect(() => {
     try {
-      let sid = sessionStorage.getItem(`ivory-sid:${hotelSlug}`);
-      if (!sid) { sid = randomId(); sessionStorage.setItem(`ivory-sid:${hotelSlug}`, sid); }
+      // Use localStorage (persists across browser closures) for session ID + timestamp
+      const sidKey = `ivory-sid:${hotelSlug}`;
+      const tsKey = `ivory-sid-ts:${hotelSlug}`;
+      const storedSid = localStorage.getItem(sidKey);
+      const storedTs = localStorage.getItem(tsKey);
+
+      let sid: string = storedSid || randomId();
+      const now = Date.now();
+      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+      // If session exists and is < 24 hours old, reuse it; otherwise create new
+      if (storedSid && storedTs) {
+        const age = now - parseInt(storedTs, 10);
+        if (age >= TWENTY_FOUR_HOURS) {
+          // Session expired — create new one
+          sid = randomId();
+        }
+      }
+
+      localStorage.setItem(sidKey, sid);
+      localStorage.setItem(tsKey, now.toString());
       setSessionId(sid);
 
       let vid = localStorage.getItem(`ivory-vid:${hotelSlug}`);
