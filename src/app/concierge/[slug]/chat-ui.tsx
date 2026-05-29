@@ -1331,20 +1331,31 @@ export function ConciergeChat({
                   `;
 
                   // Load html2pdf and generate PDF
+                  console.log("Starting PDF export...");
                   const script = document.createElement("script");
                   script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+                  script.onerror = () => {
+                    console.error("Failed to load html2pdf library from CDN");
+                  };
                   script.onload = () => {
-                    const element = document.createElement("div");
-                    element.innerHTML = htmlContent;
-                    const filename = `Ivory-${hotelName.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.pdf`;
-                    const opt = {
-                      margin: [12, 10, 12, 10], // mm: top, left, bottom, right
-                      filename,
-                      image: { type: "jpeg", quality: 0.98 },
-                      html2canvas: { scale: 2, logging: false },
-                      jsPDF: { orientation: "portrait", unit: "mm", format: "a4" },
-                    };
-                    (window as any).html2pdf().set(opt).fromElement(element).save();
+                    try {
+                      console.log("html2pdf library loaded, html2pdf available:", typeof (window as any).html2pdf);
+                      const element = document.createElement("div");
+                      element.innerHTML = htmlContent;
+                      const filename = `Ivory-${hotelName.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.pdf`;
+                      const opt = {
+                        margin: [12, 10, 12, 10], // mm: top, left, bottom, right
+                        filename,
+                        image: { type: "jpeg", quality: 0.98 },
+                        html2canvas: { scale: 2, logging: false },
+                        jsPDF: { orientation: "portrait", unit: "mm", format: "a4" },
+                      };
+                      console.log("Calling html2pdf with options:", opt);
+                      (window as any).html2pdf().set(opt).fromElement(element).save();
+                      console.log("PDF generation initiated");
+                    } catch (err) {
+                      console.error("Error in PDF generation:", err);
+                    }
                   };
                   document.head.appendChild(script);
 
