@@ -1238,7 +1238,7 @@ async function generatePDF(
   // Filter to selected messages
   const selectedMsgs = allMessages.filter((m) => selectedIds.has((m as any).id));
 
-  // Create styled HTML content
+  // Create styled HTML content with professional formatting
   const htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -1246,35 +1246,59 @@ async function generatePDF(
       <meta charset="UTF-8">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        html, body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
           background: white;
-          padding: 40px;
-          color: #1a1a1a;
-          line-height: 1.6;
+          color: #1f2937;
+          line-height: 1.5;
+        }
+        body {
+          padding: 48px 40px;
+          max-width: 800px;
+          margin: 0 auto;
         }
         .header {
           text-align: center;
-          margin-bottom: 30px;
-          border-bottom: 2px solid ${brandColor};
-          padding-bottom: 20px;
+          margin-bottom: 40px;
+          padding-bottom: 24px;
+          border-bottom: 3px solid ${brandColor};
+        }
+        .header-brand {
+          font-size: 14px;
+          font-weight: 600;
+          letter-spacing: 0.5px;
+          color: ${brandColor};
+          margin-bottom: 8px;
+          text-transform: uppercase;
         }
         .header h1 {
-          font-size: 24px;
-          margin-bottom: 5px;
-          color: ${brandColor};
+          font-size: 32px;
+          font-weight: 700;
+          margin-bottom: 12px;
+          color: #1f2937;
         }
-        .header p {
-          font-size: 12px;
-          color: #666;
+        .header-meta {
+          display: flex;
+          justify-content: center;
+          gap: 20px;
+          font-size: 13px;
+          color: #6b7280;
+          margin-top: 16px;
+        }
+        .header-meta span {
+          display: flex;
+          align-items: center;
         }
         .messages {
-          margin-top: 30px;
+          margin-top: 40px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
         }
         .message {
-          margin-bottom: 20px;
           display: flex;
-          gap: 12px;
+          width: 100%;
+          margin-bottom: 12px;
         }
         .message.user {
           justify-content: flex-end;
@@ -1282,43 +1306,82 @@ async function generatePDF(
         .message.assistant {
           justify-content: flex-start;
         }
+        .message-wrapper {
+          max-width: 85%;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .message.user .message-wrapper {
+          align-items: flex-end;
+        }
+        .speaker-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: #9ca3af;
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+          padding: 0 8px;
+        }
         .bubble {
-          max-width: 75%;
           padding: 12px 16px;
-          border-radius: 12px;
+          border-radius: 16px;
           word-wrap: break-word;
           white-space: pre-wrap;
-          font-size: 14px;
+          font-size: 15px;
+          line-height: 1.5;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.08);
         }
         .message.user .bubble {
           background: ${brandColor};
           color: white;
+          border-bottom-right-radius: 4px;
         }
         .message.assistant .bubble {
-          background: #f0f0f0;
-          color: #1a1a1a;
+          background: #f3f4f6;
+          color: #1f2937;
+          border-bottom-left-radius: 4px;
         }
-        .speaker {
-          font-size: 12px;
-          color: #999;
-          margin-bottom: 4px;
-          font-weight: 600;
+        .divider {
+          height: 1px;
+          background: #e5e7eb;
+          margin: 20px 0;
         }
         .footer {
-          margin-top: 40px;
-          padding-top: 20px;
-          border-top: 1px solid #ddd;
+          margin-top: 48px;
+          padding-top: 24px;
+          border-top: 1px solid #e5e7eb;
           text-align: center;
-          font-size: 11px;
-          color: #999;
+        }
+        .footer-title {
+          font-size: 13px;
+          font-weight: 600;
+          color: #374151;
+          margin-bottom: 8px;
+        }
+        .footer-text {
+          font-size: 12px;
+          color: #9ca3af;
+          line-height: 1.6;
+        }
+        .footer-text a {
+          color: ${brandColor};
+          text-decoration: none;
+        }
+        @media print {
+          body { padding: 40px; }
+          .message { page-break-inside: avoid; }
         }
       </style>
     </head>
     <body>
       <div class="header">
-        <h1>Ivory Concierge</h1>
-        <p>${hotelName}</p>
-        <p>${new Date().toLocaleString()}</p>
+        <div class="header-brand">Ivory Concierge</div>
+        <h1>${hotelName}</h1>
+        <div class="header-meta">
+          <span>📅 ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
+          <span>🕐 ${new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
+        </div>
       </div>
 
       <div class="messages">
@@ -1326,20 +1389,29 @@ async function generatePDF(
           const text = messageToText(msg);
           const isUser = msg.role === "user";
           const speaker = isUser ? "You" : "Maya";
+          const escapedText = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
           return `
             <div class="message ${isUser ? "user" : "assistant"}">
-              <div>
-                <div class="speaker">${speaker}</div>
-                <div class="bubble">${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+              <div class="message-wrapper">
+                <div class="speaker-label">${speaker}</div>
+                <div class="bubble">${escapedText}</div>
               </div>
             </div>
           `;
         }).join("")}
       </div>
 
+      <div class="divider"></div>
+
       <div class="footer">
-        <p>This conversation was exported from Ivory Concierge.</p>
-        <p>For more information, visit agentivory.com</p>
+        <div class="footer-title">Ivory Concierge</div>
+        <div class="footer-text">
+          This conversation was exported for your personal reference.<br>
+          For more information, visit <a href="https://agentivory.com">agentivory.com</a>
+        </div>
       </div>
     </body>
     </html>
