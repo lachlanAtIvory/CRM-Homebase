@@ -1162,27 +1162,7 @@ export function ConciergeChat({
               </button>
               <button
                 onClick={() => {
-                  // Build text content from selected messages
-                  const selectedMsgs = messages.filter((m) => selectedMsgIds.has(m.id));
-                  const textContent = [
-                    `Conversation with Ivory Concierge at ${hotelName}`,
-                    `Date: ${new Date().toLocaleString()}`,
-                    `---\n`,
-                    ...selectedMsgs.map((msg) => {
-                      const role = msg.role === "user" ? "You" : "Maya";
-                      return `${role}:\n${messageToText(msg)}\n`;
-                    }),
-                  ].join("\n");
-
-                  // Create blob and download
-                  const blob = new Blob([textContent], { type: "text/plain" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `Ivory-Conversation-${new Date().getTime()}.txt`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-
+                  generatePDF(messages, selectedMsgIds, hotelName, brandColor);
                   setShowExportModal(false);
                   setSelectedMsgIds(new Set());
                 }}
@@ -1190,7 +1170,7 @@ export function ConciergeChat({
                 className="flex-1 px-4 py-2 rounded-lg text-white transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ background: "var(--brand)" }}
               >
-                Export as Text
+                Export as PDF
               </button>
             </div>
           </div>
@@ -1246,6 +1226,145 @@ function messageToText(m: UIMessageLike): string {
       .join("");
   }
   return "";
+}
+
+/** Generate a styled PDF from selected messages */
+async function generatePDF(
+  allMessages: UIMessageLike[],
+  selectedIds: Set<string>,
+  hotelName: string,
+  brandColor: string
+) {
+  // Filter to selected messages
+  const selectedMsgs = allMessages.filter((m) => selectedIds.has((m as any).id));
+
+  // Create styled HTML content
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          background: white;
+          padding: 40px;
+          color: #1a1a1a;
+          line-height: 1.6;
+        }
+        .header {
+          text-align: center;
+          margin-bottom: 30px;
+          border-bottom: 2px solid ${brandColor};
+          padding-bottom: 20px;
+        }
+        .header h1 {
+          font-size: 24px;
+          margin-bottom: 5px;
+          color: ${brandColor};
+        }
+        .header p {
+          font-size: 12px;
+          color: #666;
+        }
+        .messages {
+          margin-top: 30px;
+        }
+        .message {
+          margin-bottom: 20px;
+          display: flex;
+          gap: 12px;
+        }
+        .message.user {
+          justify-content: flex-end;
+        }
+        .message.assistant {
+          justify-content: flex-start;
+        }
+        .bubble {
+          max-width: 75%;
+          padding: 12px 16px;
+          border-radius: 12px;
+          word-wrap: break-word;
+          white-space: pre-wrap;
+          font-size: 14px;
+        }
+        .message.user .bubble {
+          background: ${brandColor};
+          color: white;
+        }
+        .message.assistant .bubble {
+          background: #f0f0f0;
+          color: #1a1a1a;
+        }
+        .speaker {
+          font-size: 12px;
+          color: #999;
+          margin-bottom: 4px;
+          font-weight: 600;
+        }
+        .footer {
+          margin-top: 40px;
+          padding-top: 20px;
+          border-top: 1px solid #ddd;
+          text-align: center;
+          font-size: 11px;
+          color: #999;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>Ivory Concierge</h1>
+        <p>${hotelName}</p>
+        <p>${new Date().toLocaleString()}</p>
+      </div>
+
+      <div class="messages">
+        ${selectedMsgs.map((msg) => {
+          const text = messageToText(msg);
+          const isUser = msg.role === "user";
+          const speaker = isUser ? "You" : "Maya";
+          return `
+            <div class="message ${isUser ? "user" : "assistant"}">
+              <div>
+                <div class="speaker">${speaker}</div>
+                <div class="bubble">${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+
+      <div class="footer">
+        <p>This conversation was exported from Ivory Concierge.</p>
+        <p>For more information, visit agentivory.com</p>
+      </div>
+    </body>
+    </html>
+  `;
+
+  // Load html2pdf from CDN and generate PDF
+  const script = document.createElement("script");
+  script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+  document.head.appendChild(script);
+
+  script.onload = () => {
+    const element = document.createElement("div");
+    element.innerHTML = htmlContent;
+
+    // Use html2pdf (now available globally)
+    const opt = {
+      margin: 0,
+      filename: `Ivory-${hotelName.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.pdf`,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2 },
+      jsPDF: { orientation: "portrait", unit: "mm", format: "a4" },
+    };
+
+    (window as unknown as { html2pdf: (opt: unknown, elem: HTMLElement) => void }).html2pdf(opt, element);
+  };
 }
 
 // Minimal SpeechRecognition typings (browser API isn't in lib.dom.d.ts everywhere)
