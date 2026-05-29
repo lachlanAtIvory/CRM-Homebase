@@ -687,7 +687,8 @@ export function ConciergeChat({
           )}
         </button>
 
-        {/* Export chat button */}
+        {/* Export chat button — DISABLED FOR NOW */}
+        {/*
         <button
           type="button"
           onClick={() => setShowExportConfirm(true)}
@@ -706,6 +707,7 @@ export function ConciergeChat({
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
         </button>
+        */}
       </header>
 
       {/* ── Messages ─── */}
@@ -785,13 +787,20 @@ export function ConciergeChat({
           })}
 
           {streaming && (
-            <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground animate-in fade-in slide-in-from-left-2">
-              <span className="flex gap-0.5">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" style={{ animationDelay: "0ms" }} />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" style={{ animationDelay: "150ms" }} />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground" style={{ animationDelay: "300ms" }} />
-              </span>
-              Ivory is typing
+            <div className="flex items-start gap-2">
+              <div
+                className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm"
+                style={{ background: brandColor }}
+              >
+                <Sparkles size={12} />
+              </div>
+              <div className="max-w-[85%] rounded-2xl rounded-tl-md border bg-card px-4 py-2.5 text-sm animate-in fade-in slide-in-from-left-2">
+                <div className="flex gap-0.5">
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "0ms" }} />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "150ms" }} />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
             </div>
           )}
 
