@@ -787,18 +787,23 @@ export function ConciergeChat({
           })}
 
           {streaming && (
-            <div className="flex items-start gap-2">
+            <div className="flex items-start gap-2 animate-in fade-in slide-in-from-left-2 duration-300">
               <div
                 className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm"
                 style={{ background: brandColor }}
               >
                 <Sparkles size={12} />
               </div>
-              <div className="max-w-[85%] rounded-2xl rounded-tl-md border bg-card px-4 py-2.5 text-sm animate-in fade-in slide-in-from-left-2">
-                <div className="flex gap-0.5">
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "0ms" }} />
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "150ms" }} />
-                  <span className="h-2 w-2 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "300ms" }} />
+              <div className="max-w-[85%] rounded-2xl rounded-tl-md border bg-card px-4 py-3 text-sm" style={{
+                animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+              }}>
+                <div className="flex gap-1.5 items-center">
+                  <span className="text-xs font-medium text-muted-foreground">Ivory's thinking</span>
+                  <div className="flex gap-1">
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "0ms" }} />
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "150ms" }} />
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-foreground" style={{ animationDelay: "300ms" }} />
+                  </div>
                 </div>
               </div>
             </div>
