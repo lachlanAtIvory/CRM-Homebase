@@ -1162,7 +1162,191 @@ export function ConciergeChat({
               </button>
               <button
                 onClick={() => {
-                  generatePDF(messages, selectedMsgIds, hotelName, brandColor);
+                  // Generate PDF from selected messages
+                  const selectedMsgs = messages.filter((m) => selectedMsgIds.has((m as any).id));
+                  const htmlContent = `
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                      <meta charset="UTF-8">
+                      <style>
+                        * { margin: 0; padding: 0; box-sizing: border-box; }
+                        html, body {
+                          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+                          background: white;
+                          color: #1f2937;
+                          line-height: 1.5;
+                        }
+                        body {
+                          padding: 48px 40px;
+                          max-width: 800px;
+                          margin: 0 auto;
+                        }
+                        .header {
+                          text-align: center;
+                          margin-bottom: 40px;
+                          padding-bottom: 24px;
+                          border-bottom: 3px solid ${brandColor};
+                        }
+                        .header-brand {
+                          font-size: 14px;
+                          font-weight: 600;
+                          letter-spacing: 0.5px;
+                          color: ${brandColor};
+                          margin-bottom: 8px;
+                          text-transform: uppercase;
+                        }
+                        .header h1 {
+                          font-size: 32px;
+                          font-weight: 700;
+                          margin-bottom: 12px;
+                          color: #1f2937;
+                        }
+                        .header-meta {
+                          display: flex;
+                          justify-content: center;
+                          gap: 20px;
+                          font-size: 13px;
+                          color: #6b7280;
+                          margin-top: 16px;
+                        }
+                        .messages {
+                          margin-top: 40px;
+                          display: flex;
+                          flex-direction: column;
+                          gap: 16px;
+                        }
+                        .message {
+                          display: flex;
+                          width: 100%;
+                          margin-bottom: 12px;
+                        }
+                        .message.user {
+                          justify-content: flex-end;
+                        }
+                        .message.assistant {
+                          justify-content: flex-start;
+                        }
+                        .message-wrapper {
+                          max-width: 85%;
+                          display: flex;
+                          flex-direction: column;
+                          gap: 4px;
+                        }
+                        .message.user .message-wrapper {
+                          align-items: flex-end;
+                        }
+                        .speaker-label {
+                          font-size: 11px;
+                          font-weight: 600;
+                          color: #9ca3af;
+                          text-transform: uppercase;
+                          letter-spacing: 0.3px;
+                          padding: 0 8px;
+                        }
+                        .bubble {
+                          padding: 12px 16px;
+                          border-radius: 16px;
+                          word-wrap: break-word;
+                          white-space: pre-wrap;
+                          font-size: 15px;
+                          line-height: 1.5;
+                          box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+                        }
+                        .message.user .bubble {
+                          background: ${brandColor};
+                          color: white;
+                          border-bottom-right-radius: 4px;
+                        }
+                        .message.assistant .bubble {
+                          background: #f3f4f6;
+                          color: #1f2937;
+                          border-bottom-left-radius: 4px;
+                        }
+                        .divider {
+                          height: 1px;
+                          background: #e5e7eb;
+                          margin: 20px 0;
+                        }
+                        .footer {
+                          margin-top: 48px;
+                          padding-top: 24px;
+                          border-top: 1px solid #e5e7eb;
+                          text-align: center;
+                        }
+                        .footer-title {
+                          font-size: 13px;
+                          font-weight: 600;
+                          color: #374151;
+                          margin-bottom: 8px;
+                        }
+                        .footer-text {
+                          font-size: 12px;
+                          color: #9ca3af;
+                          line-height: 1.6;
+                        }
+                      </style>
+                    </head>
+                    <body>
+                      <div class="header">
+                        <div class="header-brand">Ivory Concierge</div>
+                        <h1>${hotelName}</h1>
+                        <div class="header-meta">
+                          <span>📅 ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
+                          <span>🕐 ${new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
+                        </div>
+                      </div>
+
+                      <div class="messages">
+                        ${selectedMsgs.map((msg) => {
+                          const text = messageToText(msg);
+                          const isUser = msg.role === "user";
+                          const speaker = isUser ? "You" : "Maya";
+                          const escapedText = text
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;");
+                          return `
+                            <div class="message ${isUser ? "user" : "assistant"}">
+                              <div class="message-wrapper">
+                                <div class="speaker-label">${speaker}</div>
+                                <div class="bubble">${escapedText}</div>
+                              </div>
+                            </div>
+                          `;
+                        }).join("")}
+                      </div>
+
+                      <div class="divider"></div>
+
+                      <div class="footer">
+                        <div class="footer-title">Ivory Concierge</div>
+                        <div class="footer-text">
+                          This conversation was exported for your personal reference.<br>
+                          For more information, visit agentivory.com
+                        </div>
+                      </div>
+                    </body>
+                    </html>
+                  `;
+
+                  // Load html2pdf and generate PDF
+                  const script = document.createElement("script");
+                  script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+                  script.onload = () => {
+                    const element = document.createElement("div");
+                    element.innerHTML = htmlContent;
+                    const opt = {
+                      margin: 0,
+                      filename: `Ivory-${hotelName.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.pdf`,
+                      image: { type: "jpeg", quality: 0.98 },
+                      html2canvas: { scale: 2 },
+                      jsPDF: { orientation: "portrait", unit: "mm", format: "a4" },
+                    };
+                    (window as any).html2pdf(opt, element);
+                  };
+                  document.head.appendChild(script);
+
                   setShowExportModal(false);
                   setSelectedMsgIds(new Set());
                 }}
@@ -1226,217 +1410,6 @@ function messageToText(m: UIMessageLike): string {
       .join("");
   }
   return "";
-}
-
-/** Generate a styled PDF from selected messages */
-async function generatePDF(
-  allMessages: UIMessageLike[],
-  selectedIds: Set<string>,
-  hotelName: string,
-  brandColor: string
-) {
-  // Filter to selected messages
-  const selectedMsgs = allMessages.filter((m) => selectedIds.has((m as any).id));
-
-  // Create styled HTML content with professional formatting
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
-          background: white;
-          color: #1f2937;
-          line-height: 1.5;
-        }
-        body {
-          padding: 48px 40px;
-          max-width: 800px;
-          margin: 0 auto;
-        }
-        .header {
-          text-align: center;
-          margin-bottom: 40px;
-          padding-bottom: 24px;
-          border-bottom: 3px solid ${brandColor};
-        }
-        .header-brand {
-          font-size: 14px;
-          font-weight: 600;
-          letter-spacing: 0.5px;
-          color: ${brandColor};
-          margin-bottom: 8px;
-          text-transform: uppercase;
-        }
-        .header h1 {
-          font-size: 32px;
-          font-weight: 700;
-          margin-bottom: 12px;
-          color: #1f2937;
-        }
-        .header-meta {
-          display: flex;
-          justify-content: center;
-          gap: 20px;
-          font-size: 13px;
-          color: #6b7280;
-          margin-top: 16px;
-        }
-        .header-meta span {
-          display: flex;
-          align-items: center;
-        }
-        .messages {
-          margin-top: 40px;
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-        .message {
-          display: flex;
-          width: 100%;
-          margin-bottom: 12px;
-        }
-        .message.user {
-          justify-content: flex-end;
-        }
-        .message.assistant {
-          justify-content: flex-start;
-        }
-        .message-wrapper {
-          max-width: 85%;
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-        .message.user .message-wrapper {
-          align-items: flex-end;
-        }
-        .speaker-label {
-          font-size: 11px;
-          font-weight: 600;
-          color: #9ca3af;
-          text-transform: uppercase;
-          letter-spacing: 0.3px;
-          padding: 0 8px;
-        }
-        .bubble {
-          padding: 12px 16px;
-          border-radius: 16px;
-          word-wrap: break-word;
-          white-space: pre-wrap;
-          font-size: 15px;
-          line-height: 1.5;
-          box-shadow: 0 1px 2px rgba(0,0,0,0.08);
-        }
-        .message.user .bubble {
-          background: ${brandColor};
-          color: white;
-          border-bottom-right-radius: 4px;
-        }
-        .message.assistant .bubble {
-          background: #f3f4f6;
-          color: #1f2937;
-          border-bottom-left-radius: 4px;
-        }
-        .divider {
-          height: 1px;
-          background: #e5e7eb;
-          margin: 20px 0;
-        }
-        .footer {
-          margin-top: 48px;
-          padding-top: 24px;
-          border-top: 1px solid #e5e7eb;
-          text-align: center;
-        }
-        .footer-title {
-          font-size: 13px;
-          font-weight: 600;
-          color: #374151;
-          margin-bottom: 8px;
-        }
-        .footer-text {
-          font-size: 12px;
-          color: #9ca3af;
-          line-height: 1.6;
-        }
-        .footer-text a {
-          color: ${brandColor};
-          text-decoration: none;
-        }
-        @media print {
-          body { padding: 40px; }
-          .message { page-break-inside: avoid; }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <div class="header-brand">Ivory Concierge</div>
-        <h1>${hotelName}</h1>
-        <div class="header-meta">
-          <span>📅 ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
-          <span>🕐 ${new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</span>
-        </div>
-      </div>
-
-      <div class="messages">
-        ${selectedMsgs.map((msg) => {
-          const text = messageToText(msg);
-          const isUser = msg.role === "user";
-          const speaker = isUser ? "You" : "Maya";
-          const escapedText = text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-          return `
-            <div class="message ${isUser ? "user" : "assistant"}">
-              <div class="message-wrapper">
-                <div class="speaker-label">${speaker}</div>
-                <div class="bubble">${escapedText}</div>
-              </div>
-            </div>
-          `;
-        }).join("")}
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="footer">
-        <div class="footer-title">Ivory Concierge</div>
-        <div class="footer-text">
-          This conversation was exported for your personal reference.<br>
-          For more information, visit <a href="https://agentivory.com">agentivory.com</a>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  // Load html2pdf from CDN and generate PDF
-  const script = document.createElement("script");
-  script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-  document.head.appendChild(script);
-
-  script.onload = () => {
-    const element = document.createElement("div");
-    element.innerHTML = htmlContent;
-
-    // Use html2pdf (now available globally)
-    const opt = {
-      margin: 0,
-      filename: `Ivory-${hotelName.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.pdf`,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2 },
-      jsPDF: { orientation: "portrait", unit: "mm", format: "a4" },
-    };
-
-    (window as unknown as { html2pdf: (opt: unknown, elem: HTMLElement) => void }).html2pdf(opt, element);
-  };
 }
 
 // Minimal SpeechRecognition typings (browser API isn't in lib.dom.d.ts everywhere)
