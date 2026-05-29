@@ -125,7 +125,8 @@ export async function POST(req: NextRequest) {
         : Promise.resolve({ results: [] }),
     ]);
 
-    // Upsert session + persist the latest user msg (fire and forget so streaming starts fast)
+    // Upsert session for rate-limit tracking (fire and forget so streaming starts fast)
+    // Note: Messages are NOT automatically saved — guests export explicitly if desired
     const country   = req.headers.get("x-vercel-ip-country") || null;
     const userAgent = req.headers.get("user-agent")          || null;
 
@@ -145,18 +146,6 @@ export async function POST(req: NextRequest) {
             },
             { onConflict: "id" },
           );
-
-        const lastUser = [...messages].reverse().find((m) => m.role === "user");
-        if (lastUser) {
-          const text = uiMessageToText(lastUser);
-          if (text) {
-            await supabase.from("concierge_messages").insert({
-              session_id: sessionId,
-              role:       "user",
-              content:    text,
-            });
-          }
-        }
       } catch { /* don't break the chat on logging failures */ }
     })();
 
@@ -215,16 +204,7 @@ export async function POST(req: NextRequest) {
         ...capped,
       ],
       temperature: 0.7,
-      // Save the assistant message once streaming completes
-      onFinish: async ({ text }) => {
-        try {
-          await supabase.from("concierge_messages").insert({
-            session_id: sessionId,
-            role:       "assistant",
-            content:    text,
-          });
-        } catch { /* noop */ }
-      },
+      // Messages are NOT automatically saved — guests export explicitly if desired
     });
 
     return result.toUIMessageStreamResponse();
