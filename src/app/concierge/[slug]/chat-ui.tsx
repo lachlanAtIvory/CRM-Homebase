@@ -93,7 +93,8 @@ export function ConciergeChat({
   const [pendingAudio, setPendingAudio] = useState<{ url: string; messageId: string } | null>(null); // tap-to-play fallback
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [input,      setInput]      = useState("");
-  const [showExportModal, setShowExportModal] = useState(false); // Export chat modal
+  const [showExportConfirm, setShowExportConfirm] = useState(false); // Export confirmation screen
+  const [showExportModal, setShowExportModal] = useState(false); // Export chat modal (message selection)
   const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(new Set()); // Messages to export
 
   // Pre-compute which categories actually have matching recs — empty ones
@@ -689,13 +690,17 @@ export function ConciergeChat({
         {/* Export chat button */}
         <button
           type="button"
-          onClick={() => setShowExportModal(true)}
+          onClick={() => setShowExportConfirm(true)}
           disabled={messages.length === 0}
-          className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded-full p-2 transition-all hover:bg-muted/40 disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{
+            color: messages.length > 0 ? "var(--brand)" : "var(--muted-foreground)",
+            fontWeight: "600",
+          }}
           title="Export this conversation"
           aria-label="Export chat"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" y1="15" x2="12" y2="3" />
@@ -1035,7 +1040,63 @@ export function ConciergeChat({
         </p>
       </footer>
 
-      {/* ── Export Modal ─── */}
+      {/* ── Export Confirmation Screen ─── */}
+      {showExportConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="w-full sm:w-96 rounded-2xl bg-background border shadow-lg animate-in fade-in slide-in-from-bottom-4 sm:zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <h2 className="font-semibold">Export Conversation</h2>
+              <button
+                onClick={() => setShowExportConfirm(false)}
+                className="rounded-full p-1.5 hover:bg-muted"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-6 space-y-4">
+              <div className="space-y-3">
+                <p className="text-sm leading-relaxed">
+                  <strong>Privacy Notice:</strong> Your conversations with Ivory are <strong>not automatically saved</strong> on our servers. Each time you refresh or close this page, your chat history is cleared.
+                </p>
+
+                <p className="text-sm leading-relaxed">
+                  The export feature allows you to <strong>manually download your conversation</strong> to your device so you can keep it for future reference.
+                </p>
+
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  By exporting, you are choosing to save this conversation locally on your device. Ivory Concierge will not retain a copy.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex gap-2 border-t px-6 py-4">
+              <button
+                onClick={() => setShowExportConfirm(false)}
+                className="flex-1 px-4 py-2 rounded-lg border hover:bg-muted transition-colors text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowExportConfirm(false);
+                  setShowExportModal(true);
+                }}
+                className="flex-1 px-4 py-2 rounded-lg text-white transition-colors text-sm font-medium"
+                style={{ background: "var(--brand)" }}
+              >
+                I Agree, Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Export Modal (Message Selection) ─── */}
       {showExportModal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-4">
           <div className="w-full sm:w-96 max-h-[80vh] overflow-y-auto rounded-2xl bg-background border shadow-lg animate-in fade-in slide-in-from-bottom-4 sm:zoom-in-95 duration-200">
