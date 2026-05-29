@@ -1336,14 +1336,15 @@ export function ConciergeChat({
                   script.onload = () => {
                     const element = document.createElement("div");
                     element.innerHTML = htmlContent;
+                    const filename = `Ivory-${hotelName.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.pdf`;
                     const opt = {
-                      margin: 0,
-                      filename: `Ivory-${hotelName.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.pdf`,
+                      margin: [12, 10, 12, 10], // mm: top, left, bottom, right
+                      filename,
                       image: { type: "jpeg", quality: 0.98 },
-                      html2canvas: { scale: 2 },
+                      html2canvas: { scale: 2, logging: false },
                       jsPDF: { orientation: "portrait", unit: "mm", format: "a4" },
                     };
-                    (window as any).html2pdf(opt, element);
+                    (window as any).html2pdf().set(opt).fromElement(element).save();
                   };
                   document.head.appendChild(script);
 
