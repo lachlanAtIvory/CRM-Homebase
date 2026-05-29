@@ -1351,7 +1351,7 @@ export function ConciergeChat({
                         jsPDF: { orientation: "portrait", unit: "mm", format: "a4" },
                       };
                       console.log("Calling html2pdf with options:", opt);
-                      (window as any).html2pdf().set(opt).fromElement(element).save();
+                      (window as any).html2pdf().set(opt).from(element).save();
                       console.log("PDF generation initiated");
                     } catch (err) {
                       console.error("Error in PDF generation:", err);
