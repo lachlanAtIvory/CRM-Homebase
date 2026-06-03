@@ -472,41 +472,9 @@ export function ConciergeChat({
         audio.pause();
       } catch { /* unlock failed — tap-to-play fallback covers us */ }
 
-      // 2. Fetch Maya's voice for the greeting + play through the SAME
-      //    audio element (which is now unlocked). Using one element
-      //    means even if something race-conditions, we can't get layered
-      //    playback — a new `.src` assignment supersedes the old stream.
-      try {
-        setSpeaking(true);
-        const res = await fetch("/api/concierge/speak", {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ text: greeting }),
-        });
-        if (!res.ok) { setSpeaking(false); return; }
-
-        const blob = await res.blob();
-        const url  = URL.createObjectURL(blob);
-
-        // Stop whatever the unlock audio is doing first
-        try { audio.pause(); } catch { /* noop */ }
-        audio.src    = url;
-        audio.volume = 1;
-        audio.onended = () => {
-          setSpeaking(false);
-          URL.revokeObjectURL(url);
-          haptic(5);
-        };
-        audio.onerror = () => {
-          setSpeaking(false);
-          URL.revokeObjectURL(url);
-        };
-        await audio.play();
-        // Mark this greeting as already-spoken so the speak effect doesn't re-fire
-        lastSpokenMsgIdRef.current = "splash-greeting";
-      } catch {
-        setSpeaking(false);
-      }
+      // 2. Don't auto-play greeting audio — voice is OFF by default.
+      //    When they toggle the speaker on, the speakReplies effect will
+      //    auto-play the greeting message naturally.
     })();
   }
 
