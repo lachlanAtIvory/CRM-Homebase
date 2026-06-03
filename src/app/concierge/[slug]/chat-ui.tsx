@@ -455,7 +455,7 @@ export function ConciergeChat({
 
     haptic(15);
     setStarted(true);          // → reveal chat on the next render, FIRST
-    setSpeakReplies(true);     // speaker on by default (they tapped, they want voice)
+    setSpeakReplies(false);    // voice OFF by default; guests toggle if they want audio
     audioUnlockedRef.current = true;
 
     // All audio work runs off the critical path so the UI updates instantly.
