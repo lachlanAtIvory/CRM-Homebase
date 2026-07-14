@@ -3,7 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Public paths — accessible without auth. Includes analytics endpoints
 // because the tracking script + beacon are called from public websites,
-// and the Ivory Concierge guest-facing chat + API.
+// the Ivory Concierge guest-facing chat + API, and the HQ ingest endpoint
+// (called by n8n; guarded by the x-ivory-key shared secret, not a session).
 const PUBLIC_PATHS = [
   "/login",
   "/auth/callback",
@@ -11,6 +12,7 @@ const PUBLIC_PATHS = [
   "/track.js",
   "/concierge",
   "/api/concierge",
+  "/api/ingest",
 ];
 
 // concierge.agentivory.com (and any preview subdomain that ends in it) is
