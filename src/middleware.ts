@@ -13,6 +13,9 @@ const PUBLIC_PATHS = [
   "/concierge",
   "/api/concierge",
   "/api/ingest",
+  // /api/jobs/:id/complete is the n8n callback (x-ivory-key header auth).
+  // The sibling GET /api/jobs/:id does its own session check in-route.
+  "/api/jobs",
 ];
 
 // concierge.agentivory.com (and any preview subdomain that ends in it) is

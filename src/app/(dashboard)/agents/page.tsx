@@ -1,39 +1,44 @@
-const AGENT_PLACEHOLDERS = [
-  { name: "Lead Scraper", category: "Outreach" },
-  { name: "Email Agent", category: "Outreach" },
-  { name: "Report Generator", category: "Analytics" },
-  { name: "Calendar Sync", category: "Operations" },
-];
+import { createClient } from "@/lib/supabase/server";
+import { MissionControl } from "./mission-control";
 
-export default function AgentsPage() {
+/**
+ * HQ Mission Control — a card per n8n agent workflow.
+ *
+ * Cards come from src/lib/hq/agents-config.ts (Ryan edits config, not
+ * components). This server component supplies the dynamic bits: the signed
+ * client list (Report Generator's dropdown) and each client's most recent
+ * call (Call Monitor's status readout).
+ */
+export default async function AgentsPage() {
+  const supabase = await createClient();
+
+  const [{ data: clients }, { data: recentCalls }] = await Promise.all([
+    supabase
+      .from("hq_clients")
+      .select("id, name")
+      .order("name", { ascending: true }),
+    supabase
+      .from("calls")
+      .select("client_id, started_at")
+      .not("started_at", "is", null)
+      .order("started_at", { ascending: false })
+      .limit(500),
+  ]);
+
+  // Most recent call per client — rows arrive newest-first, keep the first
+  // one we see for each client.
+  const latestCallByClient: Record<string, string> = {};
+  for (const c of recentCalls ?? []) {
+    const cid = c.client_id as string | null;
+    if (cid && !(cid in latestCallByClient)) {
+      latestCallByClient[cid] = c.started_at as string;
+    }
+  }
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {AGENT_PLACEHOLDERS.map((agent) => (
-        <div
-          key={agent.name}
-          className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5"
-        >
-          <div className="mb-4 flex items-start justify-between">
-            <div>
-              <p className="font-medium">{agent.name}</p>
-              <p className="text-xs text-muted-foreground">{agent.category}</p>
-            </div>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              Inactive
-            </span>
-          </div>
-          <div className="space-y-1.5">
-            {["Leads scraped", "Emails sent", "Reports generated", "Responses received"].map(
-              (metric) => (
-                <div key={metric} className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">{metric}</span>
-                  <span className="font-medium">—</span>
-                </div>
-              ),
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
+    <MissionControl
+      clients={(clients ?? []) as { id: string; name: string }[]}
+      latestCallByClient={latestCallByClient}
+    />
   );
 }
