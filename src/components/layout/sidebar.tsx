@@ -11,6 +11,7 @@ import {
   ListTodo,
   FileText,
   Bot,
+  Calculator,
   CalendarDays,
   BarChart3,
   Hotel,
@@ -28,6 +29,7 @@ const NAV = [
   { href: "/analytics",       label: "Analytics",       icon: BarChart3       },
   { href: "/concierge-usage", label: "Concierge",       icon: Hotel           },
   { href: "/agents",          label: "Agents",          icon: Bot             },
+  { href: "/quote",           label: "Quote Builder",   icon: Calculator      },
   { href: "/calendar",        label: "Calendar",        icon: CalendarDays    },
   { href: "/settings",        label: "Settings",        icon: Settings        },
 ] as const;
