@@ -1,23 +1,13 @@
+import { QuoteBuilder } from "./quote-builder";
+
 /**
- * Quote Builder — the internal pricing calculator, embedded as-is.
+ * Quote Builder — native CRM version of the internal pricing calculator.
  *
- * The tool lives at public/hq/quote-calculator.html as a self-contained
- * HTML file (own styles, fonts, and logic; assumptions persist to
- * localStorage). It's embedded rather than rewritten so the quoting maths
- * and layout stay byte-identical to the standalone version. To update it,
- * replace that file with the new export.
- *
- * Auth: middleware protects /hq/* like every other non-public path, so the
- * calculator (and its internal margins view) is only reachable logged in.
+ * Pricing engine lives in src/lib/hq/quote-math.ts (verified 1:1 against the
+ * original standalone tool); tunables in src/lib/hq/quote-config.ts. Tuned
+ * assumptions persist to localStorage under the same key as the old tool,
+ * so previously saved values carry over.
  */
 export default function QuotePage() {
-  return (
-    <div className="-m-6 h-[calc(100vh-3.5rem)]">
-      <iframe
-        src="/hq/quote-calculator.html"
-        title="Agent Ivory Quote Builder"
-        className="h-full w-full border-0"
-      />
-    </div>
-  );
+  return <QuoteBuilder />;
 }
