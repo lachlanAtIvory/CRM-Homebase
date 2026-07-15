@@ -99,6 +99,14 @@ export async function POST(req: NextRequest) {
     return fail("Webhook unreachable (timeout or network error)");
   }
 
+  // Fire-and-forget agents deliver output elsewhere (Drive/Slack) and never
+  // call back — mark the job done now so nothing lingers as "running".
+  if (config.fireAndForget) {
+    const result = { message: "Sent to n8n — output lands in the usual place." };
+    await supabase.from("jobs").update({ status: "done", result }).eq("id", job.id);
+    return NextResponse.json({ id: job.id, status: "done", result });
+  }
+
   await supabase.from("jobs").update({ status: "running" }).eq("id", job.id);
   return NextResponse.json({ id: job.id, status: "running" });
 }

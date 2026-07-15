@@ -77,13 +77,20 @@ export function MissionControl({
         headers: { "content-type": "application/json" },
         body:    JSON.stringify({ agent: agent.id, data }),
       });
-      const out = (await res.json()) as { id?: string; status?: string; error?: string };
+      const out = (await res.json()) as {
+        id?: string; status?: string; error?: string; result?: Record<string, unknown>;
+      };
       if (!res.ok || !out.id) {
         setJobs((j) => ({ ...j, [agent.id]: { id: "", status: "failed", error: out.error ?? `Request failed (${res.status})` } }));
         return;
       }
       if (out.status === "failed") {
         setJobs((j) => ({ ...j, [agent.id]: { id: out.id!, status: "failed", error: out.error } }));
+        return;
+      }
+      if (out.status === "done") {
+        // fire-and-forget agent — confirmed sent, nothing to poll
+        setJobs((j) => ({ ...j, [agent.id]: { id: out.id!, status: "done", result: out.result } }));
         return;
       }
       setJobs((j) => ({ ...j, [agent.id]: { id: out.id!, status: "running" } }));
@@ -148,15 +155,18 @@ function FormCard({
           if (!busy) onRun(values);
         }}
       >
-        {agent.fields.map((f) => (
-          <Field
-            key={f.key}
-            field={f}
-            clients={clients}
-            value={values[f.key] ?? ""}
-            onChange={(v) => setValues((s) => ({ ...s, [f.key]: v }))}
-          />
-        ))}
+        <div className="grid grid-cols-2 gap-3">
+          {agent.fields.map((f) => (
+            <div key={f.key} className={f.half ? "col-span-1" : "col-span-2"}>
+              <Field
+                field={f}
+                clients={clients}
+                value={values[f.key] ?? ""}
+                onChange={(v) => setValues((s) => ({ ...s, [f.key]: v }))}
+              />
+            </div>
+          ))}
+        </div>
 
         <div className="mt-auto space-y-2 pt-2">
           <JobStatus job={job} />
@@ -280,7 +290,8 @@ function Field({
         </select>
       ) : (
         <input
-          type={field.type === "date" ? "date" : "text"}
+          type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}
+          step={field.type === "number" ? "any" : undefined}
           className={base}
           placeholder={field.placeholder}
           required={field.required}
