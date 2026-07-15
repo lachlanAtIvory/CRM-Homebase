@@ -14,7 +14,7 @@
  * used by the Call Monitor.
  */
 
-export type AgentFieldType = "text" | "date" | "textarea" | "select";
+export type AgentFieldType = "text" | "number" | "date" | "textarea" | "select";
 
 export type AgentField = {
   key:          string;         // property name sent to the webhook
@@ -24,6 +24,7 @@ export type AgentField = {
   placeholder?: string;
   options?:     string[];       // static select options
   optionsFrom?: "hq_clients";   // dynamic select — populated from the table
+  half?:        boolean;        // render at half width (pair consecutive halves)
 };
 
 export type AgentConfig = {
@@ -34,6 +35,10 @@ export type AgentConfig = {
   kind:         "form" | "status";
   fields:       AgentField[];
   submitLabel?: string;
+  // true = don't wait for the n8n callback; the card confirms "sent" and the
+  // job is marked done immediately. Use for workflows that deliver their
+  // output elsewhere (Drive, Slack) and don't POST /api/jobs/:id/complete yet.
+  fireAndForget?: boolean;
 };
 
 export const AGENTS: AgentConfig[] = [
@@ -52,15 +57,26 @@ export const AGENTS: AgentConfig[] = [
   {
     id:          "report_generator",
     name:        "Report Generator",
-    description: "Builds a client performance report for a date range.",
+    description: "Add a business to the Leads sheet and generate a fresh report. n8n appends the row and runs the report workflow.",
     webhookEnv:  "N8N_WEBHOOK_REPORT",
     kind:        "form",
+    // Field keys mirror the "Agent Ivory - Leads" sheet columns — Ryan's
+    // Sheets node maps them 1:1 (and sets Processed itself).
     fields: [
-      { key: "client_id", label: "Client",    type: "select", required: true, optionsFrom: "hq_clients" },
-      { key: "date_from",  label: "From",     type: "date",   required: true },
-      { key: "date_to",    label: "To",       type: "date",   required: true },
+      { key: "business_name",   label: "Business name",   type: "text",   required: true, placeholder: "Breeze Dental Helensvale" },
+      { key: "website",         label: "Website",         type: "text",   required: true, placeholder: "https://…" },
+      { key: "email",           label: "Email",           type: "text",   half: true, placeholder: "hello@…" },
+      { key: "number",          label: "Phone",           type: "text",   half: true, placeholder: "+61 …" },
+      { key: "address",         label: "Address",         type: "text",   placeholder: "Street, suburb, state, postcode" },
+      { key: "category",        label: "Category",        type: "text",   half: true, placeholder: "Dentist, Physiotherapist…" },
+      { key: "rating",          label: "Google rating",   type: "number", half: true, placeholder: "4.8" },
+      { key: "reviews",         label: "Review count",    type: "number", half: true, placeholder: "125" },
+      { key: "google_maps_url", label: "Google Maps URL", type: "text",   half: true, placeholder: "https://google.com/maps/place/…" },
     ],
-    submitLabel: "Generate report",
+    submitLabel: "Add lead + generate report",
+    // Flip to false once Ryan's workflow POSTs /api/jobs/:id/complete —
+    // the card will then wait and show the finished report as a button.
+    fireAndForget: true,
   },
   {
     id:          "linkedin_draft",
