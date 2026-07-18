@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
+import { GuruWidget } from "@/components/guru/guru-widget";
 import { TaskReminderManager } from "./_components/task-reminder-manager";
 
 export default async function DashboardLayout({
@@ -28,6 +29,9 @@ export default async function DashboardLayout({
 
       {/* Background — polls open tasks, fires reminders 10 min before due time */}
       <TaskReminderManager />
+
+      {/* Floating "Ask the Guru" sales-trainer chat, bottom-right on every page */}
+      <GuruWidget />
     </div>
   );
 }
