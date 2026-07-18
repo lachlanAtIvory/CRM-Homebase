@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { generateText } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { createClient } from "@/lib/supabase/server";
+import { buildGuruSystem } from "@/lib/hq/guru-prompt";
 
 /**
- * The Guru — chat proxy to the n8n guru engine.
+ * The Guru — sales-trainer chat.
  *
- * Session-authed (internal widget). Forwards { message, history } to the
- * webhook in N8N_WEBHOOK_GURU with the shared-secret header and returns
- * { reply }. Tolerant of the common n8n response shapes ({ output },
- * { reply }, { text }, { message }, [{ output }], or raw text).
+ * Session-authed. Calls Claude server-side with the Guru persona + the
+ * full Sales Bible as system prompt (ported from the standalone guru
+ * HTML tool, which called Anthropic from the browser with an embedded
+ * key — now retired).
  *
- * AI agents in n8n can take a while — allow up to 60s.
+ * The system block is wrapped in Anthropic prompt caching: the ~14k-token
+ * bible is billed at 10% on every turn within the cache window, so a
+ * training session costs cents, not dollars.
  */
 export const maxDuration = 60;
 
@@ -36,60 +41,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
 
-  const webhookUrl = process.env.N8N_WEBHOOK_GURU;
-  if (!webhookUrl) {
-    return NextResponse.json({
-      reply: "The Guru engine isn't connected yet — add the N8N_WEBHOOK_GURU env var in Vercel and redeploy, then I'll come alive.",
-    });
-  }
+  const history = (body.history ?? []).slice(-12).map((m) => ({
+    role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
+    content: m.text,
+  }));
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 55_000);
-    const res = await fetch(webhookUrl, {
-      method:  "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-ivory-key":  process.env.IVORY_INGEST_KEY ?? "",
-      },
-      body: JSON.stringify({
-        message,
-        history: (body.history ?? []).slice(-12),
-        user:    user.email ?? user.id,
-      }),
-      signal: controller.signal,
+    const result = await generateText({
+      // Same model the standalone guru ran on — swap to a newer Sonnet
+      // deliberately (and re-test the voice) rather than by accident.
+      model: anthropic("claude-sonnet-4-6"),
+      messages: [
+        {
+          role:    "system",
+          content: buildGuruSystem(),
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral" } },
+          },
+        },
+        ...history,
+        { role: "user", content: message },
+      ],
+      maxOutputTokens: 1500,
     });
-    clearTimeout(timer);
 
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `The Guru engine responded ${res.status} — check the n8n execution log.` },
-        { status: 502 },
-      );
-    }
-
-    const raw = await res.text();
-    return NextResponse.json({ reply: extractReply(raw) });
-  } catch {
+    return NextResponse.json({ reply: result.text });
+  } catch (e) {
+    console.error("Guru error:", e);
     return NextResponse.json(
-      { error: "The Guru took too long or was unreachable — check n8n is running." },
-      { status: 504 },
+      { error: "Hit a snag talking to the brain. Say it again and we go again." },
+      { status: 502 },
     );
   }
-}
-
-/** Pull the reply text out of whatever shape the n8n workflow returns. */
-function extractReply(raw: string): string {
-  try {
-    const j: unknown = JSON.parse(raw);
-    const first = Array.isArray(j) ? j[0] : j;
-    if (typeof first === "string") return first;
-    if (first && typeof first === "object") {
-      const o = first as Record<string, unknown>;
-      for (const key of ["output", "reply", "text", "message", "answer"]) {
-        if (typeof o[key] === "string" && (o[key] as string).trim()) return o[key] as string;
-      }
-    }
-  } catch { /* not JSON — fall through to raw text */ }
-  return raw.trim() || "…the Guru went quiet. Check the n8n workflow's response node.";
 }
