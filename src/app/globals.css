@@ -152,3 +152,12 @@
 [data-sonner-toast][data-type="loading"] [data-sonner-loader] > div {
   background: var(--brand);
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Guru chat bubble — gentle scale pulse on hover (used via
+   hover:animate-[guru-pulse_1.4s_ease-in-out_infinite])
+   ────────────────────────────────────────────────────────────────────────── */
+@keyframes guru-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
