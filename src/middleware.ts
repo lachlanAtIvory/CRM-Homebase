@@ -36,6 +36,7 @@ const CONCIERGE_BLOCKED = [
   "/analytics",
   "/agents",
   "/quote",
+  "/sales-bible",
   "/hq",                // static internal tools (quote calculator etc.)
   "/calendar",
   "/settings",

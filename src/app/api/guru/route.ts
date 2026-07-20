@@ -3,6 +3,7 @@ import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createClient } from "@/lib/supabase/server";
 import { buildGuruSystem } from "@/lib/hq/guru-prompt";
+import { GURU_ENABLED } from "@/lib/hq/guru-flags";
 
 /**
  * The Guru — sales-trainer chat.
@@ -24,6 +25,14 @@ type GuruBody = {
 };
 
 export async function POST(req: NextRequest) {
+  // Kill switch — while disabled, no request can reach Anthropic.
+  if (!GURU_ENABLED) {
+    return NextResponse.json(
+      { error: "The Guru is paused for now. The Sales Bible is in the sidebar — the playbook never sleeps." },
+      { status: 503 },
+    );
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {

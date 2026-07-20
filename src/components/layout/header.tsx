@@ -28,6 +28,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/concierge-usage":  "Concierge Usage",
   "/agents":           "Agents",
   "/quote":            "Quote Builder",
+  "/sales-bible":      "Sales Bible",
   "/calendar":         "Calendar",
   "/settings":         "Settings",
   "/application/new":  "Launch Application",
