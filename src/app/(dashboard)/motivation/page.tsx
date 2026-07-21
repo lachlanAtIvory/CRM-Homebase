@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
-import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
+import {
+  actorFromEmail, fetchMotivationHistory, fetchMotivationStats,
+} from "@/lib/hq/motivation-stats";
 import { MotivationDashboard } from "./motivation-dashboard";
 
 /**
@@ -13,7 +15,10 @@ export default async function MotivationPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const actor = actorFromEmail(user?.email);
-  const stats = await fetchMotivationStats(supabase, actor);
+  const [stats, history] = await Promise.all([
+    fetchMotivationStats(supabase, actor),
+    fetchMotivationHistory(supabase, actor),
+  ]);
 
-  return <MotivationDashboard initialStats={stats} actor={actor} />;
+  return <MotivationDashboard initialStats={stats} history={history} actor={actor} />;
 }

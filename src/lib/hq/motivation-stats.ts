@@ -91,3 +91,79 @@ export async function fetchMotivationStats(
   }
   return stats;
 }
+
+/* ── History: streaks, personal bests, due-for-a-yes ─────────────────────── */
+
+export type MotivationHistory = {
+  /** Sydney-dated daily totals for the last 60 days, EXCLUDING today. */
+  days: { date: string; calls: number; booked: number }[];
+  bestDayCalls:  number;   // best single day before today
+  bestHourCalls: number;   // best single hour before the current hour
+  allCalls:      number;   // all-time dials
+  allBooked:     number;   // all-time bookings
+  dialsSinceLastBooked: number;
+};
+
+export async function fetchMotivationHistory(
+  supabase: SupabaseClient,
+  actor: string,
+): Promise<MotivationHistory> {
+  const { data: rows } = await supabase
+    .from("prospect_events")
+    .select("type, occurred_at")
+    .eq("actor", actor)
+    .in("type", ["cold_call", "demo"])
+    .eq("detail->>source", "motivation")
+    .order("occurred_at", { ascending: true })
+    .limit(10000);
+
+  const dayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" });
+  const hourFmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Australia/Sydney", hour: "2-digit", hour12: false,
+  });
+  const today = dayFmt.format(new Date());
+  const currentHour = `${today}T${hourFmt.format(new Date())}`;
+
+  const byDay  = new Map<string, { calls: number; booked: number }>();
+  const byHour = new Map<string, number>();
+  let allCalls = 0, allBooked = 0, dialsSinceLastBooked = 0;
+
+  for (const r of rows ?? []) {
+    const at = new Date(r.occurred_at as string);
+    const day = dayFmt.format(at);
+    const entry = byDay.get(day) ?? { calls: 0, booked: 0 };
+    if (r.type === "demo") {
+      entry.booked++;
+      allBooked++;
+      dialsSinceLastBooked = 0;
+    } else {
+      entry.calls++;
+      allCalls++;
+      dialsSinceLastBooked++;
+      const hour = `${day}T${hourFmt.format(at)}`;
+      byHour.set(hour, (byHour.get(hour) ?? 0) + 1);
+    }
+    byDay.set(day, entry);
+  }
+
+  let bestDayCalls = 0;
+  const days: MotivationHistory["days"] = [];
+  for (const [date, e] of byDay) {
+    if (date === today) continue;
+    days.push({ date, ...e });
+    if (e.calls > bestDayCalls) bestDayCalls = e.calls;
+  }
+  days.sort((a, b) => a.date.localeCompare(b.date));
+
+  let bestHourCalls = 0;
+  for (const [hour, calls] of byHour) {
+    if (hour === currentHour) continue;
+    if (calls > bestHourCalls) bestHourCalls = calls;
+  }
+
+  return {
+    days: days.slice(-60),
+    bestDayCalls, bestHourCalls,
+    allCalls, allBooked, dialsSinceLastBooked,
+  };
+}
