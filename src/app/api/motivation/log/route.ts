@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   }
 
   const result = body.result as DialResult;
-  if (!["dialed", "voicemail", "no_answer"].includes(result)) {
+  if (!["dialed", "voicemail", "no_answer", "callback"].includes(result)) {
     return NextResponse.json({ error: `Invalid result: ${body.result}` }, { status: 400 });
   }
 

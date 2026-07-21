@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     phone?:         string;
     email?:         string;
     notes?:         string;
+    when?:          string;   // ISO — the locked sales-call time
   };
   try {
     body = await req.json();
@@ -34,6 +35,10 @@ export async function POST(req: NextRequest) {
   const businessName = (body.business_name ?? "").trim();
   if (!businessName) {
     return NextResponse.json({ error: "business_name is required" }, { status: 400 });
+  }
+  const when = new Date(body.when ?? "");
+  if (Number.isNaN(when.getTime())) {
+    return NextResponse.json({ error: "when must be a valid date/time — no booking without a locked time" }, { status: 400 });
   }
 
   // 1. The client record (reuse an existing one on email match — same
@@ -74,7 +79,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: dealError.message }, { status: 500 });
   }
 
-  // 3. The activity event — today's booked count + future scoreboard
+  // 3. The calendar slot — 30 min on the joint calendar, linked to the client
+  await supabase.from("meetings").insert({
+    event_id:         `hq_${crypto.randomUUID()}`,
+    title:            `Sales call — ${businessName}`,
+    start_time:       when.toISOString(),
+    end_time:         new Date(when.getTime() + 30 * 60_000).toISOString(),
+    attendees:        user.email ? [user.email] : [],
+    linked_client_id: clientId,
+  });
+
+  // 4. The activity event — today's booked count + future scoreboard
   await supabase.from("prospect_events").insert({
     type:   "demo",
     actor,
@@ -85,6 +100,7 @@ export async function POST(req: NextRequest) {
       phone:         body.phone || null,
       email,
       notes:         body.notes || null,
+      when:          when.toISOString(),
       client_id:     clientId,
     },
   });

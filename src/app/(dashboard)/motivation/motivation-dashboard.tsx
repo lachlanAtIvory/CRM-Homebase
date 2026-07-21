@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 import { QUIZ_BANK, type QuizQuestion } from "@/lib/hq/motivation-quiz";
 import type { DialResult, MotivationStats } from "@/lib/hq/motivation-stats";
 import {
-  Brain, CalendarCheck2, CheckCircle2, Loader2, Phone, PhoneMissed,
-  RotateCcw, Voicemail, Volume2, VolumeX, X, XCircle,
+  Brain, CalendarCheck2, CheckCircle2, Loader2, Phone, PhoneForwarded,
+  PhoneMissed, RotateCcw, Voicemail, Volume2, VolumeX, X, XCircle,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -138,6 +138,7 @@ export function MotivationDashboard({
   const [quizPick, setQuizPick] = useState<number | null>(null);
   const [drill, setDrill]       = useState({ right: 0, wrong: 0 });
   const [showBooked, setShowBooked] = useState(false);
+  const [showCallback, setShowCallback] = useState(false);
   const [celebration, setCelebration] = useState<Celebration>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const { canvasRef, burst } = useConfetti();
@@ -201,7 +202,7 @@ export function MotivationDashboard({
     checkMilestones(next.calls, goal);
 
     // Maybe pop a drill (only when no other modal is up)
-    if (!quiz && !showBooked && Math.random() < QUIZ_CHANCE) {
+    if (!quiz && !showBooked && !showCallback && Math.random() < QUIZ_CHANCE) {
       setQuiz(QUIZ_BANK[Math.floor(Math.random() * QUIZ_BANK.length)]);
       setQuizPick(null);
     }
@@ -219,7 +220,7 @@ export function MotivationDashboard({
       setStats(prev);
       setFlash("Offline? Click not counted."); setTimeout(() => setFlash(null), 2500);
     }
-  }, [busy, burst, checkMilestones, goal, play, quiz, showBooked]);
+  }, [busy, burst, checkMilestones, goal, play, quiz, showBooked, showCallback]);
 
   const undoDial = useCallback(async (result: DialResult) => {
     play("wrong");
@@ -237,18 +238,19 @@ export function MotivationDashboard({
   /* ── Keyboard shortcuts ─────────────────────────────────────────────────── */
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (quiz || showBooked || celebration) return;
+      if (quiz || showBooked || showCallback || celebration) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       const k = e.key.toLowerCase();
       if (k === "c") logDial("dialed", 0.5);
       else if (k === "v") logDial("voicemail", 0.25);
       else if (k === "n") logDial("no_answer", 0.75);
+      else if (k === "k") setShowCallback(true);
       else if (k === "b") setShowBooked(true);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [logDial, quiz, showBooked, celebration]);
+  }, [logDial, quiz, showBooked, showCallback, celebration]);
 
   /* ── Quiz answer ────────────────────────────────────────────────────────── */
   function answerQuiz(i: number) {
@@ -278,8 +280,9 @@ export function MotivationDashboard({
             Dialling as <span className="font-semibold capitalize text-foreground">{actor}</span> · every click feeds the scoreboard
             {drill.right + drill.wrong > 0 && <> · drills {drill.right}/{drill.right + drill.wrong}</>}
           </p>
-          <div className="mt-4 grid grid-cols-4 gap-2">
+          <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-5">
             <Tile label="Booked today" value={stats.booked} gold />
+            <Tile label="Callbacks" value={stats.callbacks} />
             <Tile label="Voicemails" value={stats.voicemail} />
             <Tile label="No answers" value={stats.noAnswer} />
             <Tile label="Week calls" value={stats.weekCalls} />
@@ -331,10 +334,19 @@ export function MotivationDashboard({
           onClick={() => logDial("no_answer", 0.75)}
         />
         <BigButton
+          className="col-span-2 border bg-card"
+          icon={<PhoneForwarded size={22} className="text-primary" />}
+          label="Callback scheduled"
+          sub="they said ring back — locks a calendar slot + reminder · counts as a dial"
+          keyHint="K"
+          count={stats.callbacks}
+          onClick={() => { play("click"); setShowCallback(true); }}
+        />
+        <BigButton
           className="col-span-2 bg-[linear-gradient(145deg,#f59e0b,#d97706)] text-white shadow-[0_10px_32px_rgba(245,158,11,.35)]"
           icon={<CalendarCheck2 size={26} />}
           label="SALES CALL BOOKED"
-          sub="the money button — creates the lead in your pipeline"
+          sub="the money button — pipeline lead + calendar slot, automatically"
           keyHint="B"
           count={stats.booked}
           onClick={() => { play("click"); setShowBooked(true); }}
@@ -403,6 +415,37 @@ export function MotivationDashboard({
         </Modal>
       )}
 
+      {/* ── Callback modal ───────────────────────────────────────────────── */}
+      {showCallback && (
+        <CallbackModal
+          busy={busy}
+          onClose={() => { if (!busy) setShowCallback(false); }}
+          onSubmit={async (cb) => {
+            setBusy(true);
+            try {
+              const res = await fetch("/api/motivation/callback", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(cb),
+              });
+              const out = (await res.json()) as { stats?: MotivationStats; error?: string };
+              if (!res.ok || !out.stats) {
+                setFlash(out.error ?? "Couldn't schedule — try again."); setTimeout(() => setFlash(null), 3000);
+                return;
+              }
+              setStats(out.stats);
+              setShowCallback(false);
+              play("ding"); haptic(30);
+              burst({ xFrac: 0.5, yFrac: 0.5, count: 60 });
+              setFlash("Callback locked — calendar slot held, reminder set. Nothing lives in limbo.");
+              setTimeout(() => setFlash(null), 3000);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
+
       {/* ── Booked modal ─────────────────────────────────────────────────── */}
       {showBooked && (
         <BookedModal
@@ -429,7 +472,7 @@ export function MotivationDashboard({
               burst({ xFrac: 0.85, yFrac: 0.35, count: 130, colors: GOLD_COLORS, power: 1.2 });
               setCelebration({
                 title: "BOOKED. GET IN. 🏆",
-                line: `${lead.business_name} is now in your pipeline at Call Booked. Calendar before proposal. Always.`,
+                line: `${lead.business_name} is in your pipeline at Call Booked and the slot is on the calendar. Calendar before proposal. Always.`,
                 gold: true,
               });
             } finally {
@@ -580,12 +623,13 @@ function BookedModal({
 }: {
   busy: boolean;
   onClose: () => void;
-  onSubmit: (lead: { business_name: string; contact_name: string; phone: string; email: string; notes: string }) => void;
+  onSubmit: (lead: { business_name: string; contact_name: string; phone: string; email: string; notes: string; when: string }) => void;
 }) {
-  const [lead, setLead] = useState({ business_name: "", contact_name: "", phone: "", email: "", notes: "" });
+  const [lead, setLead] = useState({ business_name: "", contact_name: "", phone: "", email: "", notes: "", whenLocal: "" });
   const set = (k: keyof typeof lead) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setLead((s) => ({ ...s, [k]: e.target.value }));
   const input = "w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-shadow focus:ring-2 focus:ring-ring";
+  const valid = lead.business_name.trim() && lead.whenLocal;
 
   return (
     <Modal>
@@ -598,15 +642,24 @@ function BookedModal({
         </button>
       </div>
       <p className="text-[15px] font-bold">Sales call booked — capture what you got</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">Submits straight into the pipeline as a new lead at Call Booked.</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">Creates the pipeline lead AND holds the slot on the joint calendar.</p>
 
       <form
         className="mt-4 space-y-3"
-        onSubmit={(e) => { e.preventDefault(); if (lead.business_name.trim()) onSubmit(lead); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!valid) return;
+          const { whenLocal, ...rest } = lead;
+          onSubmit({ ...rest, when: new Date(whenLocal).toISOString() });
+        }}
       >
         <label className="block">
           <span className="mb-1 block text-xs font-semibold text-foreground/80">Business name <span className="text-destructive">*</span></span>
           <input required autoFocus className={input} value={lead.business_name} onChange={set("business_name")} placeholder="Breeze Dental Helensvale" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-foreground/80">Sales call — date &amp; time <span className="text-destructive">*</span> <span className="font-normal text-muted-foreground">(&ldquo;Thursday 2pm or Friday 10am?&rdquo;)</span></span>
+          <input required type="datetime-local" className={input} value={lead.whenLocal} onChange={set("whenLocal")} />
         </label>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
@@ -623,17 +676,83 @@ function BookedModal({
           <input type="email" className={input} value={lead.email} onChange={set("email")} placeholder="front.desk@…" />
         </label>
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-foreground/80">What you gathered <span className="font-normal text-muted-foreground">(booked time, pains, PMS, who attends)</span></span>
-          <textarea className={cn(input, "min-h-20 resize-y")} value={lead.notes} onChange={set("notes")} placeholder="Thursday 2pm. Cliniko. Missing after-hours calls, front desk flat out…" />
+          <span className="mb-1 block text-xs font-semibold text-foreground/80">What you gathered <span className="font-normal text-muted-foreground">(pains, PMS, who attends)</span></span>
+          <textarea className={cn(input, "min-h-20 resize-y")} value={lead.notes} onChange={set("notes")} placeholder="Cliniko. Missing after-hours calls, front desk flat out. Partner attending…" />
         </label>
         <button
           type="submit"
-          disabled={busy || !lead.business_name.trim()}
+          disabled={busy || !valid}
           className="w-full rounded-xl bg-[linear-gradient(145deg,#f59e0b,#d97706)] px-4 py-3 text-sm font-black text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
         >
           {busy
-            ? <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Creating the lead…</span>
-            : "LOCK IT IN → PIPELINE"}
+            ? <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Creating lead + calendar slot…</span>
+            : "LOCK IT IN → PIPELINE + CALENDAR"}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function CallbackModal({
+  busy, onClose, onSubmit,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (cb: { name: string; phone: string; when: string; note: string }) => void;
+}) {
+  const [cb, setCb] = useState({ name: "", phone: "", whenLocal: "", note: "" });
+  const set = (k: keyof typeof cb) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setCb((s) => ({ ...s, [k]: e.target.value }));
+  const input = "w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-shadow focus:ring-2 focus:ring-ring";
+  const valid = cb.name.trim() && cb.whenLocal;
+
+  return (
+    <Modal>
+      <div className="mb-1 flex items-start justify-between">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-primary">
+          <PhoneForwarded size={14} /> Lock the callback
+        </div>
+        <button type="button" onClick={onClose} disabled={busy} className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40">
+          <X size={15} />
+        </button>
+      </div>
+      <p className="text-[15px] font-bold">Callback scheduled — put it on the calendar</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">Holds a 15-min slot on the joint calendar + a reminder 10 min before.</p>
+
+      <form
+        className="mt-4 space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!valid) return;
+          onSubmit({ name: cb.name, phone: cb.phone, note: cb.note, when: new Date(cb.whenLocal).toISOString() });
+        }}
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-foreground/80">Business / name <span className="text-destructive">*</span></span>
+            <input required autoFocus className={input} value={cb.name} onChange={set("name")} placeholder="Breeze Dental" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-foreground/80">Phone</span>
+            <input className={input} value={cb.phone} onChange={set("phone")} placeholder="+61 …" />
+          </label>
+        </div>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-foreground/80">Call them back — date &amp; time <span className="text-destructive">*</span></span>
+          <input required type="datetime-local" className={input} value={cb.whenLocal} onChange={set("whenLocal")} />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-foreground/80">Note <span className="font-normal text-muted-foreground">(who to ask for, what they said)</span></span>
+          <input className={input} value={cb.note} onChange={set("note")} placeholder="Ask for Sarah — owner back after 3pm" />
+        </label>
+        <button
+          type="submit"
+          disabled={busy || !valid}
+          className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+        >
+          {busy
+            ? <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Locking the slot…</span>
+            : "LOCK THE CALLBACK → CALENDAR"}
         </button>
       </form>
     </Modal>

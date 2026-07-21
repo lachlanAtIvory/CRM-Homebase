@@ -9,13 +9,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * counts the same rows — logging a call here feeds it automatically.
  */
 
-export type DialResult = "dialed" | "voicemail" | "no_answer";
+export type DialResult = "dialed" | "voicemail" | "no_answer" | "callback";
 
 export type MotivationStats = {
-  calls:      number;   // all dials today (dialed + voicemail + no_answer)
+  calls:      number;   // all dials today (dialed + voicemail + no_answer + callback)
   dialed:     number;
   voicemail:  number;
   noAnswer:   number;
+  callbacks:  number;   // callbacks scheduled today
   booked:     number;   // sales calls booked today
   weekCalls:  number;
   weekBooked: number;
@@ -68,7 +69,7 @@ export async function fetchMotivationStats(
     .limit(3000);
 
   const stats: MotivationStats = {
-    calls: 0, dialed: 0, voicemail: 0, noAnswer: 0, booked: 0,
+    calls: 0, dialed: 0, voicemail: 0, noAnswer: 0, callbacks: 0, booked: 0,
     weekCalls: 0, weekBooked: 0,
   };
 
@@ -85,6 +86,7 @@ export async function fetchMotivationStats(
     const result = ((r.detail as Record<string, unknown> | null)?.result ?? "dialed") as DialResult;
     if (result === "voicemail")      stats.voicemail++;
     else if (result === "no_answer") stats.noAnswer++;
+    else if (result === "callback")  stats.callbacks++;
     else                             stats.dialed++;
   }
   return stats;
