@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { QUIZ_BANK, type QuizQuestion } from "@/lib/hq/motivation-quiz";
-import type { DialResult, MotivationStats } from "@/lib/hq/motivation-stats";
+import type { DialResult, MotivationHistory, MotivationStats } from "@/lib/hq/motivation-stats";
 import {
-  Brain, CalendarCheck2, CheckCircle2, Loader2, Phone, PhoneForwarded,
-  PhoneMissed, RotateCcw, Voicemail, Volume2, VolumeX, X, XCircle,
+  Brain, CalendarCheck2, CheckCircle2, Flame, Loader2, Phone, PhoneForwarded,
+  PhoneMissed, RotateCcw, Sunset, Timer, Voicemail, Volume2, VolumeX, X, XCircle,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -124,13 +124,36 @@ type Celebration = { title: string; line: string; gold?: boolean } | null;
 /* ═══════════════════════════════════════════════════════════════════════════
    The dashboard
 ═══════════════════════════════════════════════════════════════════════════ */
+function prevDate(d: string): string {
+  const t = new Date(d + "T00:00:00Z");
+  t.setUTCDate(t.getUTCDate() - 1);
+  return t.toISOString().slice(0, 10);
+}
+function isWeekend(d: string): boolean {
+  const wd = new Date(d + "T00:00:00Z").getUTCDay();
+  return wd === 0 || wd === 6;
+}
+
+const POWER_MS = 60 * 60_000;
+
 export function MotivationDashboard({
-  initialStats, actor,
+  initialStats, history, actor,
 }: {
   initialStats: MotivationStats;
+  history: MotivationHistory;
   actor: string;
 }) {
   const [stats, setStats]   = useState(initialStats);
+  // All-time mirrors for the due-for-a-yes maths (kept fresh optimistically)
+  const [flow, setFlow] = useState({
+    allCalls:  history.allCalls,
+    allBooked: history.allBooked,
+    since:     history.dialsSinceLastBooked,
+  });
+  const [bestHour, setBestHour] = useState(history.bestHourCalls);
+  const [power, setPower] = useState<{ endsAt: number; startCalls: number } | null>(null);
+  const [, setTick] = useState(0);   // 1s re-render while a Power Hour runs
+  const [showReceipt, setShowReceipt] = useState(false);
   const [goal, setGoal]     = useState(50);
   const [soundOn, setSound] = useState(true);
   const [busy, setBusy]     = useState(false);
@@ -151,7 +174,39 @@ export function MotivationDashboard({
     setSound(lsGet("motivation.sound.v1", true));
     const d = lsGet<{ date: string; right: number; wrong: number }>("motivation.drill.v1", { date: "", right: 0, wrong: 0 });
     if (d.date === todayKeyAU()) setDrill({ right: d.right, wrong: d.wrong });
+    // Resume a running Power Hour across refreshes
+    const p = lsGet<{ endsAt: number; startCalls: number } | null>("motivation.power.v1", null);
+    if (p && p.endsAt > Date.now()) setPower(p);
+    else lsSet("motivation.power.v1", null);
   }, []);
+
+  // Power Hour clock — ticks the UI and settles the block when time's up
+  const powerRef = useRef(power);
+  powerRef.current = power;
+  useEffect(() => {
+    if (!power) return;
+    const id = setInterval(() => {
+      setTick((t) => t + 1);
+      const p = powerRef.current;
+      if (p && Date.now() >= p.endsAt) {
+        const blockCalls = statsRef.current.calls - p.startCalls;
+        setPower(null);
+        lsSet("motivation.power.v1", null);
+        if (blockCalls > bestHour && blockCalls > 0) {
+          setBestHour(blockCalls);
+          if (soundOn) sfx.mega();
+          burst({ xFrac: 0.5, yFrac: 0.5, count: 220, power: 1.5 });
+          setCelebration({ title: "NEW BEST HOUR ⚡", line: `${blockCalls} calls in one block. The bar is raised.` });
+        } else {
+          if (soundOn) sfx.fanfare();
+          setFlash(`Power Hour done — ${blockCalls} call${blockCalls === 1 ? "" : "s"} in the block.`);
+          setTimeout(() => setFlash(null), 3000);
+        }
+      }
+    }, 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [power === null, bestHour]);
 
   const play = useCallback((fn: keyof typeof sfx) => { if (soundOn) sfx[fn](); }, [soundOn]);
   const haptic = (ms: number) => { try { navigator.vibrate?.(ms); } catch { /* noop */ } };
@@ -199,7 +254,20 @@ export function MotivationDashboard({
       noAnswer:  prev.noAnswer  + (result === "no_answer" ? 1 : 0),
     };
     setStats(next);
+    setFlow((f) => ({ ...f, allCalls: f.allCalls + 1, since: f.since + 1 }));
     checkMilestones(next.calls, goal);
+
+    // Record day? (fires once per day, the first time you pass your best)
+    if (history.bestDayCalls > 0 && next.calls === history.bestDayCalls + 1) {
+      const key = "motivation.recordday.v1";
+      if (lsGet<string>(key, "") !== todayKeyAU()) {
+        lsSet(key, todayKeyAU());
+        play("mega");
+        burst({ xFrac: 0.5, yFrac: 0.4, count: 200, power: 1.4 });
+        setFlash(`NEW RECORD DAY 👑 ${next.calls} calls — your best ever.`);
+        setTimeout(() => setFlash(null), 3500);
+      }
+    }
 
     // Maybe pop a drill (only when no other modal is up)
     if (!quiz && !showBooked && !showCallback && Math.random() < QUIZ_CHANCE) {
@@ -215,12 +283,17 @@ export function MotivationDashboard({
       });
       const out = (await res.json()) as { stats?: MotivationStats; error?: string };
       if (res.ok && out.stats) setStats(out.stats);
-      else { setStats(prev); setFlash(out.error ?? "Save failed — click not counted."); setTimeout(() => setFlash(null), 2500); }
+      else {
+        setStats(prev);
+        setFlow((f) => ({ ...f, allCalls: f.allCalls - 1, since: Math.max(0, f.since - 1) }));
+        setFlash(out.error ?? "Save failed — click not counted."); setTimeout(() => setFlash(null), 2500);
+      }
     } catch {
       setStats(prev);
+      setFlow((f) => ({ ...f, allCalls: f.allCalls - 1, since: Math.max(0, f.since - 1) }));
       setFlash("Offline? Click not counted."); setTimeout(() => setFlash(null), 2500);
     }
-  }, [busy, burst, checkMilestones, goal, play, quiz, showBooked, showCallback]);
+  }, [busy, burst, checkMilestones, goal, play, quiz, showBooked, showCallback, history.bestDayCalls]);
 
   const undoDial = useCallback(async (result: DialResult) => {
     play("wrong");
@@ -231,7 +304,10 @@ export function MotivationDashboard({
         body: JSON.stringify({ result, undo: true }),
       });
       const out = (await res.json()) as { stats?: MotivationStats };
-      if (out.stats) setStats(out.stats);
+      if (out.stats) {
+        setStats(out.stats);
+        setFlow((f) => ({ ...f, allCalls: Math.max(0, f.allCalls - 1), since: Math.max(0, f.since - 1) }));
+      }
     } catch { /* leave as-is */ }
   }, [play]);
 
@@ -267,6 +343,40 @@ export function MotivationDashboard({
   const pct = Math.min(100, Math.round((stats.calls / Math.max(1, goal)) * 100));
   const tierLine = TIER_LINES.find(([t]) => pct >= t)?.[1] ?? TIER_LINES[5][1];
 
+  // Streak: consecutive days hitting goal (weekends off don't break it),
+  // counting today live the moment the goal is crossed.
+  const streak = useMemo(() => {
+    const byDate = new Map(history.days.map((d) => [d.date, d.calls]));
+    let count = 0;
+    let d = prevDate(todayKeyAU());
+    for (let i = 0; i < 400; i++) {
+      const calls = byDate.get(d) ?? 0;
+      if (calls >= goal) count++;
+      else if (!isWeekend(d)) break;
+      d = prevDate(d);
+    }
+    return stats.calls >= goal ? count + 1 : count;
+  }, [history.days, stats.calls, goal]);
+
+  // Due-for-a-yes: your own all-time dials-per-booking ratio
+  const avgPerBooking = flow.allBooked > 0 ? Math.max(1, Math.round(flow.allCalls / flow.allBooked)) : null;
+  const dueIn = avgPerBooking !== null ? Math.max(0, avgPerBooking - flow.since) : null;
+
+  // Personal-best chase: override the tier line when a record is in reach
+  const bestDay = history.bestDayCalls;
+  let headline = tierLine;
+  if (bestDay > 0 && stats.calls > bestDay) {
+    headline = `NEW RECORD DAY 👑 ${stats.calls} calls and climbing.`;
+  } else if (bestDay > 0 && stats.calls < bestDay && bestDay - stats.calls <= 5) {
+    headline = `${bestDay - stats.calls} more call${bestDay - stats.calls === 1 ? "" : "s"} beats your best day ever (${bestDay}).`;
+  }
+
+  // Power Hour derived numbers
+  const powerLeft = power ? Math.max(0, power.endsAt - Date.now()) : 0;
+  const blockCalls = power ? Math.max(0, stats.calls - power.startCalls) : 0;
+  const elapsedMin = power ? (POWER_MS - powerLeft) / 60_000 : 0;
+  const paceHr = power && elapsedMin >= 1 ? Math.round((blockCalls / elapsedMin) * 60) : blockCalls * 60;
+
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <canvas ref={canvasRef} className="pointer-events-none fixed inset-0 z-[70]" />
@@ -275,10 +385,27 @@ export function MotivationDashboard({
       <div className="flex flex-col items-center gap-6 rounded-2xl border bg-card p-6 ring-1 ring-foreground/5 sm:flex-row">
         <ProgressRing pct={pct} calls={stats.calls} goal={goal} onGoalChange={(g) => { setGoal(g); lsSet("motivation.goal.v1", g); }} />
         <div className="min-w-0 flex-1 text-center sm:text-left">
-          <p className="text-lg font-bold leading-snug">{tierLine}</p>
+          {streak > 0 && (
+            <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-full bg-orange-500/15 px-2.5 py-1 text-[11px] font-black tracking-wide text-orange-500 animate-in zoom-in-90 duration-300">
+              <Flame size={12} /> DAY {streak} STREAK
+            </span>
+          )}
+          <p className="text-lg font-bold leading-snug">{headline}</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Dialling as <span className="font-semibold capitalize text-foreground">{actor}</span> · every click feeds the scoreboard
+            Dialling as <span className="font-semibold capitalize text-foreground">{actor}</span>
+            {bestDay > 0 && <> · best day {Math.max(bestDay, stats.calls)}</>}
+            {bestHour > 0 && <> · best hour {bestHour}</>}
             {drill.right + drill.wrong > 0 && <> · drills {drill.right}/{drill.right + drill.wrong}</>}
+          </p>
+          <p className={cn(
+            "mt-1.5 text-xs font-semibold",
+            dueIn === 0 ? "text-amber-500" : "text-muted-foreground",
+          )}>
+            {avgPerBooking === null
+              ? "Every dial is progress toward the first booking."
+              : dueIn === 0
+                ? `You're DUE — your average is 1 booking every ${avgPerBooking} dials and you've done ${flow.since}. The next dial could be the one.`
+                : `~1 booking every ${avgPerBooking} dials · ${flow.since} since your last · statistically due in ${dueIn}.`}
           </p>
           <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-5">
             <Tile label="Booked today" value={stats.booked} gold />
@@ -302,6 +429,62 @@ export function MotivationDashboard({
         <div className="rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-center text-sm font-bold text-primary animate-in fade-in zoom-in-95 duration-200">
           {flash}
         </div>
+      )}
+
+      {/* ── Power Hour ───────────────────────────────────────────────────── */}
+      {power ? (
+        <div className="overflow-hidden rounded-2xl border border-primary/40 bg-primary/5 ring-1 ring-primary/20 animate-in fade-in duration-300">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <Timer size={20} className="text-primary" />
+              <div>
+                <div className="text-sm font-black tracking-tight">
+                  POWER HOUR — {String(Math.floor(powerLeft / 60_000)).padStart(2, "0")}:{String(Math.floor((powerLeft % 60_000) / 1000)).padStart(2, "0")}
+                </div>
+                <div className="text-[11px] text-muted-foreground">all gas, no brakes</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-5 text-center">
+              <div>
+                <div key={blockCalls} className="text-xl font-black tabular-nums animate-in zoom-in-75 duration-200">{blockCalls}</div>
+                <div className="text-[10px] font-semibold uppercase text-muted-foreground">this block</div>
+              </div>
+              <div>
+                <div className="text-xl font-black tabular-nums">{paceHr}<span className="text-xs font-bold text-muted-foreground">/hr</span></div>
+                <div className="text-[10px] font-semibold uppercase text-muted-foreground">pace{bestHour > 0 ? ` · best ${bestHour}` : ""}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setPower(null); lsSet("motivation.power.v1", null); }}
+                className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+              >
+                End early
+              </button>
+            </div>
+          </div>
+          {/* time progress */}
+          <div className="h-1.5 bg-muted">
+            <div
+              className="h-full bg-primary transition-[width] duration-1000 ease-linear"
+              style={{ width: `${Math.min(100, ((POWER_MS - powerLeft) / POWER_MS) * 100)}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            const p = { endsAt: Date.now() + POWER_MS, startCalls: statsRef.current.calls };
+            setPower(p); lsSet("motivation.power.v1", p);
+            play("fanfare");
+            setFlash("Power Hour started. 60 minutes. All gas.");
+            setTimeout(() => setFlash(null), 2500);
+          }}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed py-3 text-sm font-bold text-muted-foreground transition-all hover:border-primary/50 hover:text-primary active:scale-[0.99]"
+        >
+          <Timer size={16} /> Start a Power Hour — 60 minutes, all gas
+          {bestHour > 0 && <span className="font-semibold text-muted-foreground/70">(best hour: {bestHour})</span>}
+        </button>
       )}
 
       {/* ── The buttons ──────────────────────────────────────────────────── */}
@@ -360,6 +543,14 @@ export function MotivationDashboard({
         <button type="button" onClick={() => undoDial("dialed")}    className="rounded-full border px-2.5 py-1 font-medium transition-colors hover:bg-muted/40 hover:text-foreground">call</button>
         <button type="button" onClick={() => undoDial("voicemail")} className="rounded-full border px-2.5 py-1 font-medium transition-colors hover:bg-muted/40 hover:text-foreground">voicemail</button>
         <button type="button" onClick={() => undoDial("no_answer")} className="rounded-full border px-2.5 py-1 font-medium transition-colors hover:bg-muted/40 hover:text-foreground">no answer</button>
+        <span className="mx-2 opacity-40">·</span>
+        <button
+          type="button"
+          onClick={() => { play("click"); setShowReceipt(true); }}
+          className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-semibold transition-colors hover:bg-muted/40 hover:text-foreground"
+        >
+          <Sunset size={12} /> Wrap the day
+        </button>
       </div>
 
       {/* ── Objection drill modal ────────────────────────────────────────── */}
@@ -465,6 +656,7 @@ export function MotivationDashboard({
                 return;
               }
               setStats(out.stats);
+              setFlow((f) => ({ ...f, allBooked: f.allBooked + 1, since: 0 }));
               setShowBooked(false);
               play("mega"); haptic(300);
               burst({ xFrac: 0.5, yFrac: 0.55, count: 300, colors: GOLD_COLORS, power: 1.7 });
@@ -479,6 +671,19 @@ export function MotivationDashboard({
               setBusy(false);
             }
           }}
+        />
+      )}
+
+      {/* ── End-of-day receipt ───────────────────────────────────────────── */}
+      {showReceipt && (
+        <ReceiptModal
+          stats={stats}
+          drill={drill}
+          streak={streak}
+          goal={goal}
+          actor={actor}
+          bestDay={Math.max(bestDay, stats.calls)}
+          onClose={() => setShowReceipt(false)}
         />
       )}
 
@@ -756,5 +961,86 @@ function CallbackModal({
         </button>
       </form>
     </Modal>
+  );
+}
+
+function ReceiptModal({
+  stats, drill, streak, goal, actor, bestDay, onClose,
+}: {
+  stats: MotivationStats;
+  drill: { right: number; wrong: number };
+  streak: number;
+  goal: number;
+  actor: string;
+  bestDay: number;
+  onClose: () => void;
+}) {
+  const goalHit = stats.calls >= goal;
+  const date = new Date().toLocaleDateString("en-AU", {
+    weekday: "long", day: "numeric", month: "long", timeZone: "Australia/Sydney",
+  });
+  const line = stats.booked > 0
+    ? "Calendar before proposal. Always. Today you proved it."
+    : goalHit
+      ? "Volume solves what talent cannot. Goal hit."
+      : "Process shows up every day. So did you.";
+
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-background/70 p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm overflow-hidden rounded-2xl bg-[linear-gradient(160deg,#16121f,#2a2435)] text-white shadow-2xl ring-1 ring-white/10 animate-in zoom-in-95 slide-in-from-bottom-2 duration-300"
+      >
+        <div className="bg-[linear-gradient(145deg,var(--brand),var(--brand-strong))] px-6 py-4">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-white/80">Ivory HQ — Daily Receipt</div>
+          <div className="mt-0.5 text-lg font-black tracking-tight">{date}</div>
+          <div className="text-xs font-semibold capitalize text-white/75">{actor}</div>
+        </div>
+
+        <div className="space-y-0 px-6 py-4">
+          <ReceiptRow label="Calls made" value={`${stats.calls} / ${goal}`} accent={goalHit ? "good" : undefined} suffix={goalHit ? "GOAL ✓" : undefined} />
+          <ReceiptRow label="Sales calls booked" value={String(stats.booked)} accent={stats.booked > 0 ? "gold" : undefined} />
+          <ReceiptRow label="Callbacks locked" value={String(stats.callbacks)} />
+          <ReceiptRow label="Voicemails" value={String(stats.voicemail)} />
+          <ReceiptRow label="No answers" value={String(stats.noAnswer)} />
+          {drill.right + drill.wrong > 0 && (
+            <ReceiptRow label="Objection drills" value={`${drill.right}/${drill.right + drill.wrong}`} />
+          )}
+          {streak > 0 && <ReceiptRow label="Streak" value={`Day ${streak} 🔥`} accent="gold" />}
+          {bestDay > 0 && <ReceiptRow label="Best day ever" value={String(bestDay)} />}
+        </div>
+
+        <div className="border-t border-white/10 px-6 py-4">
+          <p className="text-[13px] font-medium italic leading-relaxed text-[#cfc8e8]">&ldquo;{line}&rdquo;</p>
+          <div className="mt-3 flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">screenshot it · send it</span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-bold transition-colors hover:bg-white/20"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReceiptRow({ label, value, accent, suffix }: {
+  label: string; value: string; accent?: "good" | "gold"; suffix?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between border-b border-dashed border-white/10 py-2 last:border-0">
+      <span className="text-[12.5px] text-white/70">{label}</span>
+      <span className={cn(
+        "text-sm font-black tabular-nums",
+        accent === "good" && "text-emerald-400",
+        accent === "gold" && "text-amber-400",
+      )}>
+        {value}{suffix && <span className="ml-1.5 text-[10px] font-bold text-emerald-400">{suffix}</span>}
+      </span>
+    </div>
   );
 }
