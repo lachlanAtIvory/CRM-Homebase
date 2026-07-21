@@ -39,15 +39,11 @@ export function startOfDayAU(): string {
 
 /** Midnight Monday of the current Sydney week. */
 export function startOfWeekAU(): string {
-  const now = new Date();
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Australia/Sydney", year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
-  });
-  const parts = fmt.formatToParts(now);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const dayIdx = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(get("weekday"));
-  const back = dayIdx < 0 ? 0 : dayIdx;
-  const monday = new Date(`${get("year")}-${get("month")}-${get("day")}T00:00:00+10:00`);
+  // Sydney's calendar date, then a locale-proof weekday from a UTC recast
+  const d = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" }).format(new Date());
+  const dow = new Date(`${d}T00:00:00Z`).getUTCDay();       // 0 Sun … 6 Sat
+  const back = (dow + 6) % 7;                                // days since Monday
+  const monday = new Date(`${d}T00:00:00+10:00`);
   monday.setUTCDate(monday.getUTCDate() - back);
   return monday.toISOString();
 }
@@ -56,8 +52,11 @@ export async function fetchMotivationStats(
   supabase: SupabaseClient,
   actor: string,
 ): Promise<MotivationStats> {
-  const dayStart  = startOfDayAU();
-  const weekStart = startOfWeekAU();
+  // Epoch millis, NOT string compare — occurred_at arrives with a +00:00
+  // offset while dayStart is +10:00, and comparing those as text silently
+  // misclassifies anything logged between midnight and 10am Sydney.
+  const dayStartMs = new Date(startOfDayAU()).getTime();
+  const weekStart  = startOfWeekAU();
 
   const { data: rows } = await supabase
     .from("prospect_events")
@@ -74,7 +73,7 @@ export async function fetchMotivationStats(
   };
 
   for (const r of rows ?? []) {
-    const today = (r.occurred_at as string) >= dayStart;
+    const today = new Date(r.occurred_at as string).getTime() >= dayStartMs;
     if (r.type === "demo") {
       stats.weekBooked++;
       if (today) stats.booked++;
