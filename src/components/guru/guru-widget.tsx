@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { GraduationCap, RotateCcw, Send, X } from "lucide-react";
+import { GURU_ENABLED } from "@/lib/hq/guru-flags";
+import { Ban, GraduationCap, RotateCcw, Send, X } from "lucide-react";
 
 /**
  * The Guru — floating sales-trainer chatbot.
@@ -80,7 +81,27 @@ export function GuruWidget() {
   return (
     <>
       {/* ── Floating bubble ─────────────────────────────────────────────── */}
-      {!open && (
+      {!open && !GURU_ENABLED && (
+        /* Paused state: bubble stays put, but hover reveals a disabled badge
+           and label instead of the invite. No pulse, no click. */
+        <div className="group fixed bottom-6 right-6 z-50 flex items-center gap-3">
+          <span className="pointer-events-none translate-x-2 rounded-full border bg-card px-3.5 py-2 text-[13px] font-semibold text-muted-foreground shadow-lg ring-1 ring-foreground/5 opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100">
+            The Guru&apos;s paused for now
+          </span>
+          <div
+            aria-label="The Guru is paused"
+            className="relative grid h-14 w-14 cursor-not-allowed place-items-center rounded-full bg-[linear-gradient(145deg,var(--brand),var(--brand-strong))] text-white opacity-70 shadow-md transition-all duration-200 group-hover:opacity-50 group-hover:grayscale"
+          >
+            <GraduationCap size={24} />
+            {/* Disabled badge pops in on hover */}
+            <span className="absolute -right-1 -top-1 grid h-6 w-6 scale-50 place-items-center rounded-full border-2 border-background bg-destructive text-white opacity-0 transition-all duration-200 group-hover:scale-100 group-hover:opacity-100">
+              <Ban size={13} />
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!open && GURU_ENABLED && (
         <div className="group fixed bottom-6 right-6 z-50 flex items-center gap-3">
           {/* Hover label */}
           <span className="pointer-events-none translate-x-2 rounded-full border bg-card px-3.5 py-2 text-[13px] font-semibold shadow-lg ring-1 ring-foreground/5 opacity-0 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100">
