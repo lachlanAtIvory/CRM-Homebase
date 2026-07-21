@@ -20,6 +20,7 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 
 const PAGE_TITLES: Record<string, string> = {
   "/":                 "Home",
+  "/motivation":       "Motivation",
   "/pipeline":         "Pipeline",
   "/clients":          "Clients",
   "/applications":     "Applications",

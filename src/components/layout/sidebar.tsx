@@ -13,6 +13,7 @@ import {
   Bot,
   BookOpen,
   Calculator,
+  Flame,
   CalendarDays,
   BarChart3,
   Hotel,
@@ -23,6 +24,7 @@ import {
 
 const NAV = [
   { href: "/",                label: "Home",            icon: LayoutDashboard },
+  { href: "/motivation",      label: "Motivation",      icon: Flame           },
   { href: "/pipeline",        label: "Pipeline",        icon: Kanban          },
   { href: "/clients",         label: "Clients",         icon: Users           },
   { href: "/applications",    label: "Applications",    icon: FileText        },
