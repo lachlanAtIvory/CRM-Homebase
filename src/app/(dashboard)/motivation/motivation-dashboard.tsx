@@ -532,6 +532,7 @@ export function MotivationDashboard({
           sub="the money button — pipeline lead + calendar slot, automatically"
           keyHint="B"
           count={stats.booked}
+          flame
           onClick={() => { play("click"); setShowBooked(true); }}
         />
       </div>
@@ -780,10 +781,10 @@ function Tile({ label, value, gold }: { label: string; value: number; gold?: boo
 }
 
 function BigButton({
-  className, icon, label, sub, keyHint, count, onClick,
+  className, icon, label, sub, keyHint, count, flame, onClick,
 }: {
   className?: string; icon: React.ReactNode; label: string; sub: string;
-  keyHint: string; count: number; onClick: () => void;
+  keyHint: string; count: number; flame?: boolean; onClick: () => void;
 }) {
   return (
     <button
@@ -802,14 +803,63 @@ function BigButton({
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <div key={count} className="text-4xl font-black tabular-nums animate-in zoom-in-75 duration-200">
-          {count}
-        </div>
+        {flame ? (
+          <FlameGlow count={count}>
+            <div key={count} className="text-4xl font-black tabular-nums animate-in zoom-in-75 duration-200">
+              {count}
+            </div>
+          </FlameGlow>
+        ) : (
+          <div key={count} className="text-4xl font-black tabular-nums animate-in zoom-in-75 duration-200">
+            {count}
+          </div>
+        )}
         <kbd className="hidden rounded-md border border-current/30 px-1.5 py-0.5 text-[10px] font-bold opacity-50 sm:block">
           {keyHint}
         </kbd>
       </div>
     </button>
+  );
+}
+
+/**
+ * Blazing flame behind the Sales Call Booked count — grows with today's
+ * tally. Pure CSS (layered blurred radial gradients + a flicker keyframe),
+ * no images/canvas: it's an always-on ambient effect, not a one-off burst.
+ */
+function FlameGlow({ count, children }: { count: number; children: React.ReactNode }) {
+  if (count <= 0) return <>{children}</>;
+
+  const intensity = Math.min(count, 6);       // cap growth so it doesn't get silly past 6 bookings
+  const scale   = 1 + intensity * 0.22;         // 1.22 .. 2.32
+  const opacity = 0.5 + intensity * 0.08;       // 0.58 .. 0.98
+
+  return (
+    <span className="relative inline-grid place-items-center">
+      <span
+        aria-hidden
+        className="pointer-events-none absolute rounded-[45%] blur-md animate-[flame-flicker_1.5s_ease-in-out_infinite]"
+        style={{
+          width:  `${2.4 * scale}em`,
+          height: `${2.9 * scale}em`,
+          opacity,
+          background: "radial-gradient(circle at 50% 68%, #fffbe6, #fde68a 30%, #f59e0b 55%, #ea580c 78%, transparent 100%)",
+        }}
+      />
+      {intensity >= 3 && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute rounded-[45%] blur-sm animate-[flame-flicker_1.1s_ease-in-out_infinite_150ms]"
+          style={{
+            width:  `${1.3 * scale}em`,
+            height: `${1.7 * scale}em`,
+            opacity: Math.min(1, opacity + 0.15),
+            background: "radial-gradient(circle at 50% 72%, #ffffff, #fef3c7 40%, #fbbf24 75%, transparent 100%)",
+          }}
+        />
+      )}
+      <span className="relative z-10 drop-shadow-[0_1px_3px_rgba(0,0,0,.35)]">{children}</span>
+    </span>
   );
 }
 

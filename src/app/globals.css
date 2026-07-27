@@ -161,3 +161,15 @@
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.06); }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Motivation — flame glow behind the Sales Call Booked count. Dancing
+   scale/skew jitter only; size/opacity are set inline based on the count
+   (see FlameGlow in motivation-dashboard.tsx).
+   ────────────────────────────────────────────────────────────────────────── */
+@keyframes flame-flicker {
+  0%, 100% { transform: scale(1, 1)     translateY(0); }
+  25%      { transform: scale(1.08, .92) translateY(-2px); }
+  50%      { transform: scale(.93, 1.07) translateY(1px); }
+  75%      { transform: scale(1.05, .95) translateY(-1px); }
+}
