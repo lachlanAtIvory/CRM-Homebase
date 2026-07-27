@@ -408,7 +408,7 @@ export function MotivationDashboard({
                 : `~1 booking every ${avgPerBooking} dials · ${flow.since} since your last · statistically due in ${dueIn}.`}
           </p>
           <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-5">
-            <Tile label="Booked today" value={stats.booked} gold />
+            <Tile label="Booked today" value={stats.booked} gold flame />
             <Tile label="Callbacks" value={stats.callbacks} />
             <Tile label="Voicemails" value={stats.voicemail} />
             <Tile label="No answers" value={stats.noAnswer} />
@@ -532,7 +532,6 @@ export function MotivationDashboard({
           sub="the money button — pipeline lead + calendar slot, automatically"
           keyHint="B"
           count={stats.booked}
-          flame
           onClick={() => { play("click"); setShowBooked(true); }}
         />
       </div>
@@ -766,16 +765,19 @@ function ProgressRing({
   );
 }
 
-function Tile({ label, value, gold }: { label: string; value: number; gold?: boolean }) {
+function Tile({ label, value, gold, flame }: { label: string; value: number; gold?: boolean; flame?: boolean }) {
+  const number = (
+    <div key={value} className={cn(
+      "text-xl font-black tabular-nums animate-in zoom-in-75 duration-200",
+      gold && value > 0 && "text-amber-500",
+    )}>
+      {value}
+    </div>
+  );
   return (
-    <div className="rounded-xl border bg-background/40 px-2 py-2 text-center">
-      <div key={value} className={cn(
-        "text-xl font-black tabular-nums animate-in zoom-in-75 duration-200",
-        gold && value > 0 && "text-amber-500",
-      )}>
-        {value}
-      </div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+    <div className="relative rounded-xl border bg-background/40 px-2 py-2 text-center">
+      {flame ? <FlameGlow count={value}>{number}</FlameGlow> : number}
+      <div className="relative text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
     </div>
   );
 }
