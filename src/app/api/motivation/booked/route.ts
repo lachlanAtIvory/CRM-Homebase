@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
+import { createCalendarEvent } from "@/lib/hq/google-calendar";
 
 /**
  * Motivation dashboard — book a sales call.
@@ -8,7 +9,10 @@ import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats"
  * Creates the lead for real: a clients row + a deals row at the pipeline's
  * "call_booked" stage (exactly how the app creates deals elsewhere), plus a
  * prospect_events "demo" row so the booking counts on the dashboard and the
- * future scoreboard. Returns fresh stats + the new client id.
+ * future scoreboard. Also creates a REAL event on the shared Ivory Google
+ * Calendar (createCalendarEvent) — if that credential isn't configured yet,
+ * it falls back to a CRM-only meetings row so booking never breaks.
+ * Returns fresh stats + the new client id.
  */
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
@@ -79,12 +83,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: dealError.message }, { status: 500 });
   }
 
-  // 3. The calendar slot — 30 min on the joint calendar, linked to the client
+  // 3. The calendar slot — 30 min, on the REAL shared Ivory Google Calendar
+  //    when credentials are configured; always also mirrored into the CRM's
+  //    own meetings table so /calendar shows it immediately either way.
+  const start = when.toISOString();
+  const end   = new Date(when.getTime() + 30 * 60_000).toISOString();
+  const notesLine = (body.notes ?? "").trim();
+  const descriptionLines = [
+    body.contact_name ? `Contact: ${body.contact_name}` : null,
+    body.phone        ? `Phone: ${body.phone}`          : null,
+    email             ? `Email: ${email}`               : null,
+    notesLine         ? `\n${notesLine}`                : null,
+    "\nBooked via Ivory HQ — Motivation dashboard.",
+  ].filter(Boolean).join("\n");
+
+  const googleEvent = await createCalendarEvent({
+    title:          `Sales call — ${businessName}`,
+    startISO:       start,
+    endISO:         end,
+    description:    descriptionLines,
+    attendeeEmails: user.email ? [user.email] : [],
+  });
+
   await supabase.from("meetings").insert({
-    event_id:         `hq_${crypto.randomUUID()}`,
+    event_id:         googleEvent?.eventId ?? `hq_${crypto.randomUUID()}`,
     title:            `Sales call — ${businessName}`,
-    start_time:       when.toISOString(),
-    end_time:         new Date(when.getTime() + 30 * 60_000).toISOString(),
+    start_time:       start,
+    end_time:         end,
+    meeting_link:     googleEvent?.htmlLink ?? null,
     attendees:        user.email ? [user.email] : [],
     linked_client_id: clientId,
   });
