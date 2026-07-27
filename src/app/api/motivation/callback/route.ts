@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
+import { createCalendarEvent } from "@/lib/hq/google-calendar";
 
 /**
  * Motivation dashboard — schedule a callback.
  *
- * Creates three things at once:
- *  1. a meetings row (synthetic hq_cb_* event_id) so the callback holds a
- *     15-minute slot on the joint /calendar,
- *  2. a tasks row with due date+time so the CRM's reminder system pings
+ * Creates four things at once:
+ *  1. a REAL event on the shared Ivory Google Calendar (falls back to a
+ *     CRM-only meetings row if the credential isn't configured),
+ *  2. a meetings row mirroring it so the callback shows on /calendar,
+ *  3. a tasks row with due date+time so the CRM's reminder system pings
  *     10 minutes before,
- *  3. a prospect_events cold_call row (result "callback") so it counts as
+ *  4. a prospect_events cold_call row (result "callback") so it counts as
  *     a dial on the dashboard and the future scoreboard.
  */
 export async function POST(req: NextRequest) {
@@ -41,13 +43,30 @@ export async function POST(req: NextRequest) {
   const note  = (body.note ?? "").trim();
   const title = `Callback — ${name}${phone ? ` (${phone})` : ""}`;
 
-  // 1. Calendar slot (15 min)
-  const { error: meetingError } = await supabase.from("meetings").insert({
-    event_id:   `hq_cb_${crypto.randomUUID()}`,
+  // 1. Calendar slot (15 min) — real Google Calendar event when configured,
+  //    always mirrored into the CRM's own meetings table either way.
+  const start = when.toISOString();
+  const end   = new Date(when.getTime() + 15 * 60_000).toISOString();
+
+  const googleEvent = await createCalendarEvent({
     title,
-    start_time: when.toISOString(),
-    end_time:   new Date(when.getTime() + 15 * 60_000).toISOString(),
-    attendees:  user.email ? [user.email] : [],
+    startISO:       start,
+    endISO:         end,
+    description:    [
+      phone ? `Phone: ${phone}` : null,
+      note  ? `\n${note}`       : null,
+      "\nScheduled via Ivory HQ — Motivation dashboard.",
+    ].filter(Boolean).join("\n"),
+    attendeeEmails: user.email ? [user.email] : [],
+  });
+
+  const { error: meetingError } = await supabase.from("meetings").insert({
+    event_id:     googleEvent?.eventId ?? `hq_cb_${crypto.randomUUID()}`,
+    title,
+    start_time:   start,
+    end_time:     end,
+    meeting_link: googleEvent?.htmlLink ?? null,
+    attendees:    user.email ? [user.email] : [],
   });
   if (meetingError) {
     return NextResponse.json({ error: meetingError.message }, { status: 500 });
