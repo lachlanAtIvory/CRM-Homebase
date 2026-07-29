@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata() {
   return {
-    title: "Ivory Concierge — Performance report",
+    title: "Agent Ivory — Performance report",
     robots: { index: false, follow: false },
   };
 }
