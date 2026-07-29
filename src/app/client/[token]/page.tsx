@@ -60,17 +60,17 @@ export default async function ClientPortalPage({
   const maxBucket = Math.max(1, ...stats.weeklyBuckets);
 
   return (
-    <div className="min-h-screen bg-[#0d0b12] px-4 py-10 text-white">
-      <div className="mx-auto max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-[#141018] shadow-2xl">
+    <div className="min-h-screen bg-[#0d0b12] px-4 py-12 text-white sm:px-8">
+      <div className="mx-auto max-w-3xl overflow-hidden rounded-2xl border border-white/10 bg-[#141018] shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/10 px-6 py-5">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-[linear-gradient(145deg,var(--brand),var(--brand-strong))] text-sm font-medium text-white">
+        <div className="flex items-center justify-between border-b border-white/10 px-8 py-6">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-xl bg-[linear-gradient(145deg,var(--brand),var(--brand-strong))] text-base font-medium text-white">
               I
             </div>
             <div>
-              <div className="text-sm font-medium">{stats.clientName}</div>
-              <div className="text-xs text-white/50">Performance overview</div>
+              <div className="text-lg font-medium">{stats.clientName}</div>
+              <div className="text-sm text-white/50">Performance overview</div>
             </div>
           </div>
           <div className="flex gap-1 rounded-full bg-white/5 p-1">
@@ -78,7 +78,7 @@ export default async function ClientPortalPage({
               <a
                 key={d}
                 href={`?days=${d}`}
-                className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
                   d === days ? "bg-[var(--brand)] text-white" : "text-white/50 hover:text-white/80"
                 }`}
               >
@@ -89,37 +89,37 @@ export default async function ClientPortalPage({
         </div>
 
         {/* Hero: bookings */}
-        <div className="px-6 pb-1 pt-5">
-          <div className="text-[11px] uppercase tracking-wide text-white/45">
+        <div className="px-8 pb-2 pt-8">
+          <div className="text-xs uppercase tracking-wide text-white/45">
             Bookings captured by Ivory
           </div>
-          <div className="mt-1 text-4xl font-medium">{stats.bookings}</div>
+          <div className="mt-2 text-7xl font-medium leading-none">{stats.bookings}</div>
           {stats.bookingsDeltaPct !== null && (
-            <div className={`mt-0.5 text-xs ${stats.bookingsDeltaPct >= 0 ? "text-emerald-400" : "text-white/50"}`}>
+            <div className={`mt-3 text-sm ${stats.bookingsDeltaPct >= 0 ? "text-emerald-400" : "text-white/50"}`}>
               {stats.bookingsDeltaPct >= 0 ? "+" : ""}{stats.bookingsDeltaPct}% vs previous {days} days
             </div>
           )}
         </div>
 
         {/* Stat grid */}
-        <div className="grid grid-cols-2 gap-2.5 px-6 py-5">
-          <StatBox icon={<Phone size={14} />} label="Calls handled" value={stats.totalCalls} />
-          <StatBox icon={<Moon size={14} />} label="After-hours calls" value={stats.afterHours} />
-          <StatBox icon={<Mail size={14} />} label="Messages taken" value={stats.messagesTaken} />
-          <StatBox icon={<CalendarCheck2 size={14} />} label="Avg call length" value={formatDuration(stats.avgDurationSeconds)} />
+        <div className="grid grid-cols-2 gap-3 px-8 py-7 sm:grid-cols-4">
+          <StatBox icon={<Phone size={16} />} label="Calls handled" value={stats.totalCalls} />
+          <StatBox icon={<Moon size={16} />} label="After-hours calls" value={stats.afterHours} />
+          <StatBox icon={<Mail size={16} />} label="Messages taken" value={stats.messagesTaken} />
+          <StatBox icon={<CalendarCheck2 size={16} />} label="Avg call length" value={formatDuration(stats.avgDurationSeconds)} />
         </div>
 
         {/* Trend */}
-        <div className="px-6 pb-5">
-          <div className="mb-2 text-[11px] text-white/45">Calls per period</div>
-          <div className="flex h-11 items-end gap-1.5">
+        <div className="px-8 pb-7">
+          <div className="mb-3 text-xs text-white/45">Calls per period</div>
+          <div className="flex h-20 items-end gap-2">
             {stats.weeklyBuckets.map((v, i) => {
               const isLast = i === stats.weeklyBuckets.length - 1;
               const pct = Math.max(6, Math.round((v / maxBucket) * 100));
               return (
                 <div
                   key={i}
-                  className={`flex-1 rounded-sm ${isLast ? "bg-[linear-gradient(180deg,#8f7cf5,var(--brand))]" : "bg-[#3c3489]"}`}
+                  className={`flex-1 rounded-md ${isLast ? "bg-[linear-gradient(180deg,#8f7cf5,var(--brand))]" : "bg-[#3c3489]"}`}
                   style={{ height: `${pct}%` }}
                   title={`${v} calls`}
                 />
@@ -129,14 +129,14 @@ export default async function ClientPortalPage({
         </div>
 
         {/* Recent activity */}
-        <div className="border-t border-white/10 px-6 py-5">
-          <div className="mb-2.5 text-[11px] text-white/45">Recent activity</div>
+        <div className="border-t border-white/10 px-8 py-7">
+          <div className="mb-3.5 text-xs text-white/45">Recent activity</div>
           {stats.recent.length === 0 ? (
-            <p className="text-xs text-white/40">No activity in this period yet.</p>
+            <p className="text-sm text-white/40">No activity in this period yet.</p>
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-3.5">
               {stats.recent.map((item, i) => (
-                <div key={i} className="flex items-start gap-2.5 text-xs">
+                <div key={i} className="flex items-start gap-3 text-sm">
                   <OutcomeIcon outcome={item.outcome} />
                   <span className="text-white/80">
                     {formatOutcomeLabel(item.outcome)}{" "}
@@ -149,9 +149,9 @@ export default async function ClientPortalPage({
         </div>
 
         {/* Privacy footer */}
-        <div className="flex items-center gap-2 border-t border-white/10 bg-white/[0.03] px-6 py-3.5">
-          <Lock size={13} className="shrink-0 text-white/40" />
-          <p className="text-[11px] leading-relaxed text-white/40">
+        <div className="flex items-center gap-2.5 border-t border-white/10 bg-white/[0.03] px-8 py-4">
+          <Lock size={15} className="shrink-0 text-white/40" />
+          <p className="text-xs leading-relaxed text-white/40">
             Summary activity only. No call transcripts or caller details are ever shown on this page.
           </p>
         </div>
@@ -162,12 +162,12 @@ export default async function ClientPortalPage({
 
 function StatBox({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
   return (
-    <div className="rounded-lg bg-white/[0.04] px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-white/45">
+    <div className="rounded-xl bg-white/[0.04] px-4 py-3.5">
+      <div className="flex items-center gap-1.5 text-xs text-white/45">
         {icon}
         {label}
       </div>
-      <div className="mt-0.5 text-xl font-medium">{value}</div>
+      <div className="mt-1 text-2xl font-medium">{value}</div>
     </div>
   );
 }
