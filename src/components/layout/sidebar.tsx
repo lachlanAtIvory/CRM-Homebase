@@ -14,6 +14,7 @@ import {
   BookOpen,
   Calculator,
   Flame,
+  Link2,
   CalendarDays,
   BarChart3,
   Hotel,
@@ -34,6 +35,7 @@ const NAV = [
   { href: "/agents",          label: "Agents",          icon: Bot             },
   { href: "/quote",           label: "Quote Builder",   icon: Calculator      },
   { href: "/sales-bible",     label: "Sales Bible",     icon: BookOpen        },
+  { href: "/client-portals",  label: "Client Portals",  icon: Link2           },
   { href: "/calendar",        label: "Calendar",        icon: CalendarDays    },
   { href: "/settings",        label: "Settings",        icon: Settings        },
 ] as const;

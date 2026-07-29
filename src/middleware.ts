@@ -16,6 +16,9 @@ const PUBLIC_PATHS = [
   // /api/jobs/:id/complete is the n8n callback (x-ivory-key header auth).
   // The sibling GET /api/jobs/:id does its own session check in-route.
   "/api/jobs",
+  // Client portal — the unguessable portal_token IS the access control,
+  // not a session (see src/app/client/[token]/page.tsx).
+  "/client",
 ];
 
 // concierge.agentivory.com (and any preview subdomain that ends in it) is
@@ -43,6 +46,8 @@ const CONCIERGE_BLOCKED = [
   "/settings",
   "/tasks",
   "/concierge-usage",
+  "/client-portals",    // internal management page — NOT the /client/[token] portal itself
+  "/client",            // the client-report portal is a separate product surface, not for this host
   "/login",
   "/auth",
 ];
