@@ -98,11 +98,10 @@ export async function POST(req: NextRequest) {
   ].filter(Boolean).join("\n");
 
   const googleEvent = await createCalendarEvent({
-    title:          `Sales call — ${businessName}`,
-    startISO:       start,
-    endISO:         end,
-    description:    descriptionLines,
-    attendeeEmails: user.email ? [user.email] : [],
+    title:       `Sales call — ${businessName}`,
+    startISO:    start,
+    endISO:      end,
+    description: descriptionLines,
   });
 
   await supabase.from("meetings").insert({

@@ -50,14 +50,13 @@ export async function POST(req: NextRequest) {
 
   const googleEvent = await createCalendarEvent({
     title,
-    startISO:       start,
-    endISO:         end,
-    description:    [
+    startISO:    start,
+    endISO:      end,
+    description: [
       phone ? `Phone: ${phone}` : null,
       note  ? `\n${note}`       : null,
       "\nScheduled via Ivory HQ — Motivation dashboard.",
     ].filter(Boolean).join("\n"),
-    attendeeEmails: user.email ? [user.email] : [],
   });
 
   const { error: meetingError } = await supabase.from("meetings").insert({

@@ -40,7 +40,6 @@ export type CalendarEventInput = {
   startISO:   string;
   endISO:     string;
   description?: string;
-  attendeeEmails?: string[];
 };
 
 export type CalendarEventResult = {
@@ -53,6 +52,13 @@ export type CalendarEventResult = {
  * Returns null (never throws) if credentials are missing or the API call
  * fails — callers should treat null as "still booked in the CRM, just not
  * synced to Google yet" rather than an error.
+ *
+ * Deliberately no `attendees` on the insert. Adding a staff member as an
+ * attendee makes Google auto-mirror the event onto their personal
+ * calendar as an invite — since Lachlan and Ryan already have the Ivory
+ * calendar itself added in their own Google Calendar, that mirroring
+ * just duplicated every booking. One event, one calendar, visible to
+ * anyone who's subscribed to it.
  */
 export async function createCalendarEvent(
   input: CalendarEventInput,
@@ -70,7 +76,6 @@ export async function createCalendarEvent(
         description: input.description,
         start: { dateTime: input.startISO, timeZone: "Australia/Sydney" },
         end:   { dateTime: input.endISO,   timeZone: "Australia/Sydney" },
-        attendees: input.attendeeEmails?.map((email) => ({ email })),
         reminders: { useDefault: true },
       },
     });
