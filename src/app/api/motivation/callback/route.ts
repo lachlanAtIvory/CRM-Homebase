@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
+import { actorDisplayName, actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
 import { createCalendarEvent } from "@/lib/hq/google-calendar";
 
 /**
@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
 
   const phone = (body.phone ?? "").trim();
   const note  = (body.note ?? "").trim();
-  const title = `Callback — ${name}${phone ? ` (${phone})` : ""}`;
+  const bookedBy = actorDisplayName(actor);
+  const title = `Callback — ${name}${phone ? ` (${phone})` : ""} · ${bookedBy}`;
 
   // 1. Calendar slot (15 min) — real Google Calendar event when configured,
   //    always mirrored into the CRM's own meetings table either way.
@@ -53,6 +54,7 @@ export async function POST(req: NextRequest) {
     startISO:    start,
     endISO:      end,
     description: [
+      `Booked by: ${bookedBy}`,
       phone ? `Phone: ${phone}` : null,
       note  ? `\n${note}`       : null,
       "\nScheduled via Ivory HQ — Motivation dashboard.",

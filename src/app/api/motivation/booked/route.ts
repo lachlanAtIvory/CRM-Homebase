@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
+import { actorDisplayName, actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
 import { createCalendarEvent } from "@/lib/hq/google-calendar";
 
 /**
@@ -88,8 +88,11 @@ export async function POST(req: NextRequest) {
   //    own meetings table so /calendar shows it immediately either way.
   const start = when.toISOString();
   const end   = new Date(when.getTime() + 30 * 60_000).toISOString();
+  const bookedBy = actorDisplayName(actor);
+  const title = `Sales call — ${businessName} · ${bookedBy}`;
   const notesLine = (body.notes ?? "").trim();
   const descriptionLines = [
+    `Booked by: ${bookedBy}`,
     body.contact_name ? `Contact: ${body.contact_name}` : null,
     body.phone        ? `Phone: ${body.phone}`          : null,
     email             ? `Email: ${email}`               : null,
@@ -98,7 +101,7 @@ export async function POST(req: NextRequest) {
   ].filter(Boolean).join("\n");
 
   const googleEvent = await createCalendarEvent({
-    title:       `Sales call — ${businessName}`,
+    title,
     startISO:    start,
     endISO:      end,
     description: descriptionLines,
@@ -106,7 +109,7 @@ export async function POST(req: NextRequest) {
 
   await supabase.from("meetings").insert({
     event_id:         googleEvent?.eventId ?? `hq_${crypto.randomUUID()}`,
-    title:            `Sales call — ${businessName}`,
+    title,
     start_time:       start,
     end_time:         end,
     meeting_link:     googleEvent?.htmlLink ?? null,
