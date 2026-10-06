@@ -20,7 +20,7 @@ export function RevenueChart({ data }: { data: RevenueDataPoint[] }) {
   if (data.length === 0) {
     return (
       <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
-        No revenue data yet — will populate once deals go Live
+        No paid invoices yet — upload one on a client&apos;s page and mark it paid
       </div>
     );
   }
