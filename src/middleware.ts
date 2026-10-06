@@ -47,6 +47,7 @@ const CONCIERGE_BLOCKED = [
   "/tasks",
   "/concierge-usage",
   "/client-portals",    // internal management page — NOT the /client/[token] portal itself
+  "/api/invoices",      // financial data; this host skips session checks, so wall it off entirely
   "/client",            // the client-report portal is a separate product surface, not for this host
   "/login",
   "/auth",
