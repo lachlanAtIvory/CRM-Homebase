@@ -1,207 +1,310 @@
 /**
  * Quote Builder — pricing engine.
  *
- * Pure function port of the standalone calculator's calc(). Same inputs,
- * same outputs, no DOM — so it can be unit-checked against the original
- * and reused anywhere (e.g. a future "save quote to CRM" feature).
+ * Pure functions only: QuoteState in, priced quote out. No React, no storage,
+ * no rounding until display, so the maths can be tested on its own. All
+ * prices and rules come from quote-config.ts.
  */
 
 import {
-  Assumptions, BUNDLES, FLAT_MODS, ModuleKey, PackageKey, VolumeUnit, VU_FACTOR,
+  BASE_APPTS, Band, CAMPAIGN, CHANNEL_DISCOUNT, CLINIC_TYPES, CORE, CORE_ORDER,
+  DEFAULT_APPT_VALUE, DISCOUNT_REASON_LABEL, EXTRA_CHANNEL_APPT_LIFT,
+  EXTRA_PRODUCT_SETUP_FACTOR, FEES, FLOOR_SETUP, GST_MULTIPLIER, HOURLY_FLOOR,
+  LOCATION_MONTHLY_FACTOR, LOCATION_SETUP_FACTOR, MAX_SETUP_DISCOUNT_PCT,
+  NO_API_DISCOUNT, OFFER_KIND, QuoteState, SETUP, Tier, TIER_INDEX, TIER_LABEL,
+  TIER_MAX_PRACTITIONERS, Upsell, UPSELLS,
 } from "./quote-config";
 
-export type QuoteInputs = {
-  calendars: number;
-  locations: number;
-  calls:     number;      // raw, in the unit given
-  vu:        VolumeUnit;
-  dur:       number;      // avg call minutes
-  leads:     number;      // discovery-only; not used in pricing maths
-  clients:   number;      // active client base — drives reminders COGS
-  jobValue:  number;
-  missRate:  number;      // percent 0-100
-  contacts:  number;      // reactivation list size
-};
-
-export type BreakdownItem = {
-  label:         string;
-  sub?:          string;
-  setup:         number;
-  monthly:       number;
-  anchor?:       boolean;
-  campaign?:     boolean;   // billed per run, not monthly
-  campaignCost?: number;
-  custom?:       boolean;   // above top volume band — price is a floor
-};
+export type Line = { label: string; amt: number; neg?: boolean };
 
 export type QuoteResult = {
-  monthlyCalls: number;
-  estMin:       number;
-  profileName:  string;
-  items:        BreakdownItem[];
-  aboveTopBand: boolean;
-  setupRaw:     number;
-  monthlyRaw:   number;
-  discount:     number;     // 0..1
-  pkgName:      string;
-  setupFinal:   number;
-  monthlyFinal: number;
-  yearOne:      number;
-  annualSaving: number;     // saved per year when annual prepay is on
-  missCalls:    number;
-  leakMonth:    number;
-  leakYear:     number;
-  campaignCost: number;
-  outboundRoi:  null | {
-    bookExp: number; recExp: number; recLow: number; recHigh: number; takePct: number;
-  };
-  cogs:         number;
-  campaignCogs: number;
-  grossProfit:  number;
-  marginPct:    number;
-  voiceMin:     number;
+  tier: Tier;
+  band: Band;
+  integrates: boolean;
+  /** Number of core channels included (0-3). */
+  count: number;
+  setup: Line[];
+  monthly: Line[];
+  /** Campaigns billed per run, not monthly. */
+  runs: Line[];
+  /** Booking / handoff fees, one per ad offer. */
+  fees: Line[];
+  flags: string[];
+  setupTotal: number;
+  monthlyTotal: number;
+  /** Default recovered appointments a month, before any override. */
+  defAppts: number;
+  defValue: number;
+  appts: number;
+  /** Value per appointment actually used. */
+  per: number;
+  /** Monthly value recovered = appts x per. */
+  value: number;
+  /** Monthly value divided by the monthly fee. */
+  ret: number;
+  /** Days for the monthly gain to repay setup, or null if it never does. */
+  payback: number | null;
 };
 
-export function profileFor(cal: number, loc: number): string {
-  if (loc > 1 || cal >= 7) return "Multi-site group";
-  if (cal >= 4) return "Group practice";
-  if (cal >= 2) return "Small clinic";
-  return "Sole trader";
+/* ── Small helpers ───────────────────────────────────────────────────────── */
+
+/** Parse a form field; blank or junk is 0. */
+export function num(v: unknown): number {
+  const n = typeof v === "number" ? v : parseFloat(String(v));
+  return Number.isFinite(n) ? n : 0;
 }
 
-function volumeBand(A: Assumptions, estMin: number) {
-  for (const b of A.bands) {
-    if (estMin <= b.max) return { label: b.label, add: b.add, custom: false };
-  }
-  const top = A.bands[A.bands.length - 1];
-  return { label: top.label, add: top.add, custom: true };
+export function tierOf(practitioners: unknown): Tier {
+  const n = num(practitioners) || 1;
+  return n <= TIER_MAX_PRACTITIONERS.solo ? "solo" : n <= TIER_MAX_PRACTITIONERS.practice ? "practice" : "group";
 }
 
-export function computeQuote(opts: {
-  inputs:   QuoteInputs;
-  A:        Assumptions;
-  selected: Set<ModuleKey>;
-  pkg:      PackageKey;
-  annual:   boolean;
-}): QuoteResult {
-  const { inputs, A, selected, pkg, annual } = opts;
+export function mainTier(s: QuoteState): Tier {
+  return s.tierOverride !== "auto" ? s.tierOverride : tierOf(s.practitioners);
+}
 
-  const calendars = Math.max(1, Math.floor(inputs.calendars) || 1);
-  const locations = Math.max(1, Math.floor(inputs.locations) || 1);
-  const monthlyCalls = (inputs.calls || 0) * VU_FACTOR[inputs.vu];
-  const estMin = monthlyCalls * (inputs.dur || 0);
-  const missRate = (inputs.missRate || 0) / 100;
+export function bandOf(s: QuoteState): Band {
+  return CLINIC_TYPES.find((t) => t.id === s.type)?.band ?? "standard";
+}
 
-  // ── Assemble line items ───────────────────────────────────────────────────
-  const items: BreakdownItem[] = [];
-  let aboveTopBand = false;
+export function integrates(s: QuoteState): boolean {
+  return s.pms === "yes";
+}
 
-  if (selected.has("inbound")) {
-    const inb = A.inbound;
-    items.push({
-      label: "Inbound receptionist — core build",
-      sub: "discovery, call flows, 1st calendar & integration",
-      setup: inb.setupBase, monthly: inb.monthlyBase, anchor: true,
-    });
-    if (calendars > 1) items.push({
-      label: `+ ${calendars - 1} extra practitioner calendar${calendars - 1 > 1 ? "s" : ""}`,
-      setup: inb.perCalendarSetup * (calendars - 1),
-      monthly: inb.perCalendarMonthly * (calendars - 1),
-    });
-    if (locations > 1) items.push({
-      label: `+ ${locations - 1} extra location${locations - 1 > 1 ? "s" : ""}`,
-      setup: inb.perLocationSetup * (locations - 1),
-      monthly: inb.perLocationMonthly * (locations - 1),
-    });
-    const band = volumeBand(A, estMin);
-    items.push({
-      label: `${band.label} call capacity`,
-      sub: `~${Math.round(estMin).toLocaleString("en-AU")} talk-min / month`,
-      setup: 0, monthly: band.add, custom: band.custom,
-    });
-    aboveTopBand = band.custom;
+/** Whether an upsell suits this clinic type and practice-software setup. */
+export function upsellAvailable(u: Upsell, s: QuoteState): boolean {
+  if (u.types !== "all" && !u.types.includes(s.type)) return false;
+  if (!integrates(s) && u.pms === "yes") return false;
+  return true;
+}
+
+export function upsellMonthly(u: Upsell, tier: Tier, band: Band): number {
+  if (!u.monthly) return 0;
+  const triple = Array.isArray(u.monthly) ? u.monthly : u.monthly[band];
+  return triple[TIER_INDEX[tier]];
+}
+
+const money0 = new Intl.NumberFormat("en-AU", { maximumFractionDigits: 0 });
+const money2 = new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** "$1,234" (or "-$1,234"); pass dp 2 for cents. */
+export function money(n: number, dp: 0 | 2 = 0): string {
+  const rounded = Math.round(n * (dp ? 100 : 1)) / (dp ? 100 : 1);
+  return (rounded < 0 ? "-$" : "$") + (dp ? money2 : money0).format(Math.abs(rounded));
+}
+
+export function gstFactor(s: QuoteState): number {
+  return s.gst ? GST_MULTIPLIER : 1;
+}
+
+export function gstLabel(s: QuoteState): string {
+  return s.gst ? "inc GST" : "ex GST";
+}
+
+/* ── The quote ───────────────────────────────────────────────────────────── */
+
+export function computeQuote(s: QuoteState): QuoteResult {
+  const band = bandOf(s);
+  const tier = mainTier(s);
+  const ok = integrates(s);
+
+  const included = CORE_ORDER.filter((p) => s.core[p].state !== "off");
+  const count = included.length;
+  const channelPct = count >= 3 ? CHANNEL_DISCOUNT[3] : count === 2 ? CHANNEL_DISCOUNT[2] : 0;
+  const anyLive = included.some((p) => s.core[p].state === "live");
+
+  const setup: Line[] = [];
+  const monthly: Line[] = [];
+  const runs: Line[] = [];
+  const fees: Line[] = [];
+  const flags: string[] = [];
+
+  // Setup: the first product we build is full price, the rest half. A product
+  // that is already live counts as the first, so everything new is half.
+  let charged = anyLive;
+  let coreSetup = 0;
+  for (const p of included) {
+    if (s.core[p].state !== "new") continue;
+    const half = charged;
+    const amt = half ? SETUP[tier] * EXTRA_PRODUCT_SETUP_FACTOR : SETUP[tier];
+    charged = true;
+    coreSetup += amt;
+    setup.push({ label: CORE[p].label + (half ? " (half price)" : ""), amt });
+  }
+  if (!ok && coreSetup > 0) {
+    setup.push({ label: "Can't integrate (20% off)", amt: -coreSetup * NO_API_DISCOUNT, neg: true });
   }
 
-  let campaignCost = 0;
-  if (selected.has("outbound")) {
-    items.push({
-      label: "Outbound agent — build & script",
-      sub: "voice setup, list prep, campaign flow",
-      setup: A.outbound.setup, monthly: 0,
+  // Monthly: live products on old pricing keep their current price and sit
+  // outside the no-API and channel discounts.
+  let list = 0;
+  for (const p of included) {
+    const c = s.core[p];
+    if (c.state === "live" && c.legacy.trim() !== "") {
+      monthly.push({ label: CORE[p].label + " (current price)", amt: num(c.legacy) });
+    } else {
+      const amt = CORE[p].monthly[band][tier];
+      list += amt;
+      monthly.push({ label: CORE[p].label + (c.state === "live" ? " (live)" : ""), amt });
+    }
+  }
+  if (!ok && list > 0) {
+    monthly.push({ label: "Can't integrate (20% off)", amt: -list * NO_API_DISCOUNT, neg: true });
+  }
+  const afterNoApi = ok ? list : list * (1 - NO_API_DISCOUNT);
+  if (channelPct > 0 && afterNoApi > 0) {
+    monthly.push({
+      label: `${count}-channel discount (${Math.round(channelPct * 100)}%)`,
+      amt: -afterNoApi * channelPct,
+      neg: true,
     });
-    campaignCost = A.outbound.perContact * (inputs.contacts || 0);
-    items.push({
-      label: "Reactivation campaign",
-      sub: `${Math.round(inputs.contacts || 0).toLocaleString("en-AU")} contacts · billed per run`,
-      setup: 0, monthly: 0, campaign: true, campaignCost,
+  }
+
+  // Extra locations: priced by their own tier, same products as the main site.
+  for (const loc of s.locations) {
+    if (!count) continue;
+    const lt = tierOf(loc.practitioners);
+    let locCharged = anyLive;
+    let locSetup = 0;
+    let locMonthly = 0;
+    for (const p of included) {
+      if (s.core[p].state === "new") {
+        locSetup += locCharged ? SETUP[lt] * EXTRA_PRODUCT_SETUP_FACTOR : SETUP[lt];
+        locCharged = true;
+      }
+      locMonthly += CORE[p].monthly[band][lt];
+    }
+    const apiFactor = ok ? 1 : 1 - NO_API_DISCOUNT;
+    locSetup = locSetup * apiFactor * LOCATION_SETUP_FACTOR;
+    locMonthly = locMonthly * apiFactor * (1 - channelPct) * LOCATION_MONTHLY_FACTOR;
+    const name = loc.name.trim() || "Extra location";
+    if (locSetup > 0) setup.push({ label: `${name} (${TIER_LABEL[lt]}, half price)`, amt: locSetup });
+    if (locMonthly > 0) monthly.push({ label: `${name} (${TIER_LABEL[lt]}, 75%)`, amt: locMonthly });
+  }
+
+  // Upsells.
+  for (const u of UPSELLS) {
+    if (!s.upsells[u.id] || !upsellAvailable(u, s)) continue;
+    if (u.id === "reactivation") {
+      const c = num(s.reactivationContacts);
+      runs.push({
+        label: `Patient reactivation, ${c.toLocaleString("en-AU")} contacts`,
+        amt: Math.max(c * CAMPAIGN.reactivation.perContact, CAMPAIGN.reactivation.minimum),
+      });
+      continue;
+    }
+    if (u.id === "recall" && !ok) {
+      const c = num(s.recallContacts);
+      runs.push({
+        label: `Recall campaign from CSV, ${c.toLocaleString("en-AU")} contacts`,
+        amt: Math.max(c * CAMPAIGN.recall.perContact, CAMPAIGN.recall.minimum),
+      });
+      continue;
+    }
+    setup.push({ label: u.name, amt: u.setup ?? 0 });
+    monthly.push({ label: u.name, amt: upsellMonthly(u, tier, band) });
+  }
+
+  // Setup discount: only in exchange for something, and never below the floor.
+  const setupSubtotal = setup.reduce((sum, l) => sum + l.amt, 0);
+  const pct = Math.min(Math.max(num(s.discountPct), 0), MAX_SETUP_DISCOUNT_PCT);
+  if (pct > 0 && s.discountReason === "none") {
+    flags.push("Pick what the clinic gives in exchange before a setup discount applies.");
+  } else if (pct > 0 && setupSubtotal > 0 && s.discountReason !== "none") {
+    setup.push({
+      label: `${DISCOUNT_REASON_LABEL[s.discountReason]} (${pct}% off setup)`,
+      amt: -setupSubtotal * pct / 100,
+      neg: true,
     });
+    const keep = FLOOR_SETUP[tier] / SETUP[tier];
+    if (1 - pct / 100 < keep - 1e-9) {
+      flags.push(
+        `A ${pct}% setup discount takes a ${TIER_LABEL[tier]} build below your $${HOURLY_FLOOR} an hour floor. ` +
+        `Keep it to ${Math.floor((1 - keep) * 100)}% or less.`,
+      );
+    }
   }
 
-  for (const k of FLAT_MODS) {
-    if (selected.has(k)) items.push({ label: A[k].name, setup: A[k].setup, monthly: A[k].monthly });
+  // Booking / handoff fees, one per ad offer. Only apply with form-to-outbound.
+  if (s.core.outbound.state !== "off") {
+    const table = FEES[s.pms];
+    for (const o of s.offers) {
+      fees.push({ label: o.name.trim() || OFFER_KIND[o.kind], amt: table[o.kind] });
+    }
+    if (!s.offers.length) flags.push("Add the ad offer so the booking fee is set.");
   }
 
-  // ── Totals + bundle discount ──────────────────────────────────────────────
-  const setupRaw   = items.reduce((s, it) => s + it.setup, 0);
-  const monthlyRaw = items.reduce((s, it) => s + it.monthly, 0);
+  const setupTotal = setup.reduce((sum, l) => sum + l.amt, 0);
+  const monthlyTotal = monthly.reduce((sum, l) => sum + l.amt, 0);
 
-  let discount = 0, pkgName = "Custom build";
-  if (pkg !== "custom") {
-    discount = A[BUNDLES[pkg].disc] / 100;
-    pkgName  = BUNDLES[pkg].name;
+  // Return: recovered appointments scale with size and extra channels.
+  const tiers: Tier[] = [tier, ...s.locations.map((l) => tierOf(l.practitioners))];
+  const defAppts = count
+    ? Math.round(tiers.reduce((sum, t) => sum + BASE_APPTS[t] * (1 + EXTRA_CHANNEL_APPT_LIFT * (count - 1)), 0))
+    : 0;
+  const defValue = DEFAULT_APPT_VALUE[band];
+  const appts = s.apptOverride.trim() !== "" ? num(s.apptOverride) : defAppts;
+  const per = s.valueOverride.trim() !== "" ? num(s.valueOverride) : defValue;
+  const value = appts * per;
+  const ret = monthlyTotal > 0 ? value / monthlyTotal : 0;
+  const payback = value > monthlyTotal && setupTotal > 0
+    ? Math.ceil(setupTotal / ((value - monthlyTotal) / 30.4))
+    : null;
+
+  if (!count) flags.push("Pick at least one core product.");
+  if (count && ret > 0 && ret < 5) {
+    flags.push("Return is under 5x. Check their real numbers, or recommend fewer channels and start with where most of their leads come from.");
   }
-  const setupFinal   = setupRaw * (1 - discount);
-  const monthlyFinal = monthlyRaw * (1 - discount);
-
-  const yearOne = annual ? setupFinal + monthlyFinal * 10 : setupFinal + monthlyFinal * 12;
-  const annualSaving = monthlyFinal * 2;
-
-  // ── The pain: revenue leakage ─────────────────────────────────────────────
-  const missCalls = monthlyCalls * missRate;
-  const leakMonth = missCalls * (A.leadConv / 100) * (inputs.jobValue || 0);
-  const leakYear  = leakMonth * 12;
-
-  // ── Internal: COGS + margin ───────────────────────────────────────────────
-  const voiceMin = selected.has("inbound") ? estMin : 0;
-  let cogs = voiceMin * A.cogsPerMin + A.platformCost;
-  if (selected.has("reminders")) cogs += (inputs.clients || 0) * 0.4 * A.smsCost;
-  if (selected.has("textback"))  cogs += missCalls * A.smsCost;
-  const campaignCogs = selected.has("outbound") ? (inputs.contacts || 0) * 1.4 * A.cogsPerMin : 0;
-  const grossProfit = monthlyFinal - cogs;
-  const marginPct = monthlyFinal > 0 ? (grossProfit / monthlyFinal) * 100 : 0;
-
-  // ── Outbound campaign ROI ─────────────────────────────────────────────────
-  let outboundRoi: QuoteResult["outboundRoi"] = null;
-  if (selected.has("outbound") && (inputs.contacts || 0) > 0) {
-    const episode = A.obVisits * (inputs.jobValue || 0);
-    const recExp  = inputs.contacts * (A.obConvExp / 100) * episode;
-    outboundRoi = {
-      bookExp: inputs.contacts * (A.obConvExp / 100),
-      recExp,
-      recLow:  inputs.contacts * (A.obConvLow / 100) * episode,
-      recHigh: inputs.contacts * (A.obConvHigh / 100) * episode,
-      takePct: recExp > 0 ? (campaignCost / recExp) * 100 : 0,
-    };
+  if (s.upsells.coaching && upsellAvailable(UPSELLS.find((u) => u.id === "coaching")!, s) && tier === "solo") {
+    flags.push("Call coaching rarely pays off for a Solo clinic with one receptionist.");
   }
 
   return {
-    monthlyCalls, estMin,
-    profileName: profileFor(calendars, locations),
-    items, aboveTopBand,
-    setupRaw, monthlyRaw, discount, pkgName, setupFinal, monthlyFinal,
-    yearOne, annualSaving,
-    missCalls, leakMonth, leakYear,
-    campaignCost, outboundRoi,
-    cogs, campaignCogs, grossProfit, marginPct, voiceMin,
+    tier, band, integrates: ok, count,
+    setup, monthly, runs, fees, flags,
+    setupTotal, monthlyTotal,
+    defAppts, defValue, appts, per, value, ret, payback,
   };
 }
 
-/** Which bundle exactly matches a module selection (for tab highlighting). */
-export function matchBundle(selected: Set<ModuleKey>): PackageKey {
-  for (const [key, b] of Object.entries(BUNDLES)) {
-    if (b.mods.length === selected.size && b.mods.every((m) => selected.has(m))) {
-      return key as PackageKey;
-    }
+/* ── Plain-text quote (the Copy button) ──────────────────────────────────── */
+
+export function quoteText(s: QuoteState, r: QuoteResult): string {
+  const g = gstFactor(s);
+  const label = gstLabel(s);
+  const L: string[] = [];
+  const name = s.clinic.trim();
+
+  L.push("Agent Ivory quote" + (name ? " for " + name : ""));
+  L.push("");
+  L.push(
+    `Setup (one-off): ${money(r.setupTotal * g)} ${label}` +
+    (s.spread && r.setupTotal > 0 ? `, or 3 payments of ${money(r.setupTotal * g / 3)}` : ""),
+  );
+  for (const l of r.setup) L.push(`  - ${l.label}: ${money(l.amt * g)}`);
+  L.push("");
+  L.push(`Monthly: ${money(r.monthlyTotal * g)} ${label}` + (s.term === "12" ? ", 12-month term" : ", month to month"));
+  for (const l of r.monthly) L.push(`  - ${l.label}: ${money(l.amt * g)}`);
+
+  if (r.fees.length) {
+    L.push("");
+    L.push(r.integrates ? "Booking fees (per attended booking):" : "Handoff fees (per qualified lead passed to your team):");
+    for (const l of r.fees) L.push(`  - ${l.label}: ${money(l.amt * g)}`);
+    if (num(s.cap) > 0) L.push(`  - Monthly cap on these fees: ${money(num(s.cap) * g)}`);
   }
-  return "custom";
+  if (r.runs.length) {
+    L.push("");
+    L.push("Campaigns (billed per run):");
+    for (const l of r.runs) L.push(`  - ${l.label}: ${money(l.amt * g)}`);
+  }
+  if (r.count && r.monthlyTotal > 0) {
+    L.push("");
+    L.push(
+      `Expected return: about ${money(r.value)} a month recovered, roughly ${r.ret.toFixed(1)}x the monthly fee.` +
+      (r.payback ? ` Setup pays for itself in about ${r.payback} days.` : ""),
+    );
+  }
+  L.push("");
+  L.push("Included: unlimited usage (fair use applies) and a monthly results report.");
+  return L.join("\n");
 }
