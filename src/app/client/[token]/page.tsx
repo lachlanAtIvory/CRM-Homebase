@@ -4,6 +4,7 @@ import {
   fetchPortalStats, formatDuration, formatOutcomeLabel, formatRelativeSydney,
   type PortalDays,
 } from "@/lib/hq/client-portal";
+import { CLIENT_PORTALS_ENABLED } from "@/lib/hq/feature-flags";
 import {
   CalendarCheck2, Lock, Mail, Moon, Phone,
 } from "lucide-react";
@@ -33,6 +34,10 @@ export default async function ClientPortalPage({
   params: Promise<{ token: string }>;
   searchParams: Promise<{ days?: string }>;
 }) {
+  // Portals are switched off (src/lib/hq/feature-flags.ts). Checked before
+  // anything else so no token — valid or not — reaches the database.
+  if (!CLIENT_PORTALS_ENABLED) notFound();
+
   const { token } = await params;
   const { days: daysParam } = await searchParams;
 

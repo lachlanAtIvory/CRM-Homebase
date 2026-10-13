@@ -22,9 +22,11 @@ export const runtime = "edge";
 // must carry. Column-level validation beyond this is left to Postgres check
 // constraints — their error messages come back in the 400 response, which
 // is exactly what you want when debugging a workflow.
+//
+// `calls` is deliberately NOT here: call data is handled by a separate CRM,
+// so this one no longer ingests it (removed 2026-10-13).
 const ALLOWED_TABLES: Record<string, { required: string[] }> = {
   hq_clients:      { required: ["name"] },
-  calls:           { required: ["source"] },
   prospects:       { required: ["business_name"] },
   prospect_events: { required: ["prospect_id", "type"] },
   outreach_events: { required: ["prospect_id", "channel", "event"] },

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { CLIENT_PORTALS_ENABLED } from "@/lib/hq/feature-flags";
 import {
   LayoutDashboard,
   Kanban,
@@ -40,6 +41,11 @@ const NAV = [
   { href: "/settings",        label: "Settings",        icon: Settings        },
 ] as const;
 
+// Hide items for features that are switched off (src/lib/hq/feature-flags.ts)
+const VISIBLE_NAV = NAV.filter(
+  (item) => item.href !== "/client-portals" || CLIENT_PORTALS_ENABLED,
+);
+
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
@@ -72,7 +78,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-0.5 p-2">
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {VISIBLE_NAV.map(({ href, label, icon: Icon }) => {
           const active =
             href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (

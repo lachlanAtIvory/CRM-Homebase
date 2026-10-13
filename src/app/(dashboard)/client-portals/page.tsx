@@ -1,4 +1,6 @@
+import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { CLIENT_PORTALS_ENABLED } from "@/lib/hq/feature-flags";
 import { PortalList } from "./portal-list";
 import { Link2 } from "lucide-react";
 
@@ -9,6 +11,8 @@ import { Link2 } from "lucide-react";
  * in the URL is the access control (see src/app/client/[token]/page.tsx).
  */
 export default async function ClientPortalsPage() {
+  if (!CLIENT_PORTALS_ENABLED) notFound();   // switched off — see feature-flags.ts
+
   const supabase = await createClient();
   const { data: clients } = await supabase
     .from("hq_clients")
