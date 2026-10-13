@@ -9,6 +9,7 @@
  */
 
 import { parsePhone } from "./phone";
+import { guessWebsite, isMissingWebsite, WEBSITE_FROM_KEY } from "./website-guess";
 
 export const MAX_IMPORT_ROWS = 5000;
 export const MAX_IMPORT_CHARS = 3_000_000;
@@ -163,6 +164,10 @@ export type ImportParse = {
   skippedNoName: number;
   skippedNoPhone: number;
   duplicatesInFile: number;
+  /** Leads that had no website but got one by matching their email or another column to the business name. */
+  websitesFound: number;
+  /** A few of those, so the person importing can eyeball the matching. */
+  websiteSample: { business_name: string; website: string; from: "email" | "column" }[];
   /** Set when the file can't be used at all. */
   error?: string;
 };
@@ -171,6 +176,7 @@ export function parseLeadText(text: string): ImportParse {
   const base: ImportParse = {
     recognised: [], extraHeaders: [], leads: [],
     totalRows: 0, skippedNoName: 0, skippedNoPhone: 0, duplicatesInFile: 0,
+    websitesFound: 0, websiteSample: [],
   };
   if (text.length > MAX_IMPORT_CHARS) {
     return { ...base, error: "That's too much to import in one go. Split it into batches of a few thousand leads." };
@@ -219,12 +225,22 @@ export function parseLeadText(text: string): ImportParse {
       if (value) extra[clean(headers[i]).slice(0, 60)] = value.slice(0, 500);
     }
 
+    // No website in the sheet (or a placeholder like "N/A")? Try to work it out from the
+    // email domain or another link column, but only if it matches the business name.
+    let website = isMissingWebsite(v.website) ? "" : (v.website ?? "");
+    let websiteFrom: "email" | "column" | null = null;
+    if (!website) {
+      const guess = guessWebsite({ business_name, email: v.email, extra });
+      if (guess) { website = guess.url; websiteFrom = guess.from; }
+    }
+    if (websiteFrom) extra[WEBSITE_FROM_KEY] = websiteFrom;
+
     const lead: ImportLead = {
       lead_key: "",
       business_name: business_name.slice(0, 300),
       phone: phone.slice(0, 60),
       phone_e164: parsed.e164,
-      website: v.website ? v.website.slice(0, 500) : null,
+      website: website ? website.slice(0, 500) : null,
       email: v.email ? v.email.slice(0, 200) : null,
       address: v.address ? v.address.slice(0, 500) : null,
       category: v.category ? v.category.slice(0, 120) : null,
@@ -238,6 +254,12 @@ export function parseLeadText(text: string): ImportParse {
     if (seen.has(lead.lead_key)) { result.duplicatesInFile++; continue; }
     seen.add(lead.lead_key);
     result.leads.push(lead);
+    if (websiteFrom) {
+      result.websitesFound++;
+      if (result.websiteSample.length < 5) {
+        result.websiteSample.push({ business_name: lead.business_name, website: lead.website!, from: websiteFrom });
+      }
+    }
   }
   return result;
 }
