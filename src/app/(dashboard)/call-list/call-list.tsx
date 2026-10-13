@@ -8,6 +8,7 @@ import {
   type CallLead, type CallLeadNote, type LeadStatus, type Outcome, type SalesCallWith, type Tab, type TabCounts,
 } from "@/lib/hq/call-leads";
 import { parsePhone } from "@/lib/hq/phone";
+import { WEBSITE_FROM_KEY } from "@/lib/hq/website-guess";
 import {
   formatSydney, formatViewerLocal, quickTimes, sydneyWallToISO, viewerIsOnSydneyTime,
 } from "@/lib/hq/sydney-time";
@@ -15,7 +16,7 @@ import type { MotivationStats } from "@/lib/hq/motivation-stats";
 import { actorDisplayName, type Actor } from "@/lib/hq/motivation-stats";
 import {
   Ban, CalendarCheck, CalendarClock, Check, Copy, ExternalLink, Globe, Loader2, Mail,
-  MapPin, PhoneMissed, Search, Star, ThumbsDown, Upload, Voicemail, X, XCircle,
+  MapPin, PhoneMissed, Search, Star, ThumbsDown, Trash2, Upload, Voicemail, X, XCircle,
 } from "lucide-react";
 
 export type CallListInitial = {
@@ -90,7 +91,7 @@ export function CallList({ initial }: { initial: CallListInitial }) {
   const [stats, setStats] = useState<MotivationStats>(initial.stats);
   const [selectedId, setSelectedId] = useState<string | null>(initial.leads[0]?.id ?? null);
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState<Outcome | null>(null);
+  const [busy, setBusy] = useState<Outcome | "delete" | null>(null);
   const [notes, setNotes] = useState<Record<string, CallLeadNote[]>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -237,6 +238,37 @@ export function CallList({ initial }: { initial: CallListInitial }) {
     }
   }, [lead, leads, drafts, load, say]);
 
+  /** Delete the selected lead for good, then move on to the next one. */
+  const removeLead = useCallback(async () => {
+    if (!lead || live.current.busy) return;
+    const leadId = lead.id;
+    const extras = [
+      lead.status === "booked" ? "The booked sales call stays in the calendar and pipeline." : null,
+      "If you import the sheet again, this lead will be added back as new.",
+    ].filter(Boolean).join(" ");
+    if (!window.confirm(`Delete ${lead.business_name}? Its notes and call history are deleted too, and this can't be undone.\n\n${extras}`)) return;
+
+    const at = leads.findIndex((l) => l.id === leadId);
+    const nextId = leads[at + 1]?.id ?? leads[at - 1]?.id ?? null;
+    setBusy("delete");
+    try {
+      const res = await fetch(`/api/call-leads/${leadId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { say(data.error ?? "Couldn't delete that lead.", "error"); return; }
+      if (data.counts) setCounts(data.counts as TabCounts);
+      setLeads((ls) => ls.filter((l) => l.id !== leadId));
+      setNotes((n) => { const { [leadId]: _gone, ...rest } = n; return rest; });
+      setDrafts((d) => { const { [leadId]: _gone, ...rest } = d; return rest; });
+      setSelectedId(nextId);
+      say("Lead deleted.");
+      void load(live.current.tab, live.current.q, nextId);
+    } catch {
+      say("Couldn't reach the server. Check your connection and try again.", "error");
+    } finally {
+      setBusy(null);
+    }
+  }, [lead, leads, load, say]);
+
   const dueNow = counts.due;
 
   return (
@@ -352,6 +384,7 @@ export function CallList({ initial }: { initial: CallListInitial }) {
               copied={copiedId === lead.id}
               onCopy={() => copyNumber(lead)}
               onSubmit={submit}
+              onDelete={removeLead}
             />
           ) : (
             <div className="rounded-xl border bg-card p-10 text-center text-sm text-muted-foreground ring-1 ring-foreground/5">
@@ -435,16 +468,17 @@ function StatTile({ label, value, gold }: { label: string; value: number; gold?:
 type Panel = null | "callback" | "booked";
 
 function LeadDetail({
-  lead, history, draft, onDraft, busy, copied, onCopy, onSubmit,
+  lead, history, draft, onDraft, busy, copied, onCopy, onSubmit, onDelete,
 }: {
   lead: CallLead;
   history: CallLeadNote[] | undefined;
   draft: string;
   onDraft: (v: string) => void;
-  busy: Outcome | null;
+  busy: Outcome | "delete" | null;
   copied: boolean;
   onCopy: () => void;
   onSubmit: (outcome: Outcome, extra?: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string }) => Promise<boolean>;
+  onDelete: () => void;
 }) {
   const phone = parsePhone(lead.phone);
   const site = safeUrl(lead.website);
@@ -534,9 +568,16 @@ function LeadDetail({
           {lead.website && (
             <Info icon={<Globe size={14} />} label="Website">
               {site ? (
-                <a href={site} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-                  {hostOf(site)} <ExternalLink size={11} />
-                </a>
+                <>
+                  <a href={site} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+                    {hostOf(site)} <ExternalLink size={11} />
+                  </a>
+                  {lead.extra?.[WEBSITE_FROM_KEY] && (
+                    <span className="ml-2 text-[11px] text-muted-foreground" title="Worked out from the sheet, not confirmed. Check it's the right site.">
+                      {lead.extra[WEBSITE_FROM_KEY] === "email" ? "found from their email" : "found in the sheet"}
+                    </span>
+                  )}
+                </>
               ) : lead.website}
             </Info>
           )}
@@ -546,11 +587,11 @@ function LeadDetail({
             </Info>
           )}
         </dl>
-        {Object.keys(lead.extra ?? {}).length > 0 && (
+        {Object.keys(lead.extra ?? {}).some((k) => !k.startsWith("_")) && (
           <details className="mt-3 text-sm">
             <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground">More from the sheet</summary>
             <dl className="mt-2 grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
-              {Object.entries(lead.extra).map(([k, v]) => (
+              {Object.entries(lead.extra).filter(([k]) => !k.startsWith("_")).map(([k, v]) => (
                 <div key={k}>
                   <dt className="text-[11px] font-semibold text-muted-foreground">{k}</dt>
                   <dd className="break-words">{v}</dd>
@@ -626,6 +667,14 @@ function LeadDetail({
             className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-destructive disabled:opacity-50"
           >
             <Ban size={12} /> They asked not to be called again
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy !== null}
+            className="ml-4 mt-3 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-destructive disabled:opacity-50"
+          >
+            {busy === "delete" ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />} Delete this lead
           </button>
 
           {panel === "callback" && (

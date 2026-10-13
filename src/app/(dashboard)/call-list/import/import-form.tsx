@@ -16,6 +16,8 @@ type CheckResult = {
   unreadablePhones: number;
   recognised: { header: string; field: LeadField }[];
   extraHeaders: string[];
+  websitesFound: number;
+  websiteSample: { business_name: string; website: string; from: "email" | "column" }[];
   sample: { business_name: string; phone: string; category: string | null }[];
 };
 
@@ -143,6 +145,12 @@ export function ImportForm() {
               {check.duplicatesInFile > 0 && <Line>{check.duplicatesInFile.toLocaleString("en-AU")} repeated within your paste. Counted once.</Line>}
               {check.skippedNoPhone > 0 && <Line warn>{check.skippedNoPhone.toLocaleString("en-AU")} skipped: no phone number.</Line>}
               {check.skippedNoName > 0 && <Line warn>{check.skippedNoName.toLocaleString("en-AU")} skipped: no business name.</Line>}
+              {check.websitesFound > 0 && (
+                <Line good>
+                  {check.websitesFound.toLocaleString("en-AU")} {check.websitesFound === 1 ? "lead has" : "leads have"} no website in the sheet, so one was worked out from the email address or another
+                  link column. It&apos;s only added when it matches the business name.
+                </Line>
+              )}
               {check.unreadablePhones > 0 && (
                 <Line warn>
                   {check.unreadablePhones.toLocaleString("en-AU")} {check.unreadablePhones === 1 ? "phone number doesn't" : "phone numbers don't"} look like a complete Australian number.
@@ -166,6 +174,22 @@ export function ImportForm() {
                 ))}
               </div>
             </div>
+
+            {check.websiteSample.length > 0 && (
+              <div>
+                <div className="mb-1.5 text-xs font-semibold text-foreground/80">Websites found (check a few)</div>
+                <ul className="divide-y rounded-lg border">
+                  {check.websiteSample.map((w, i) => (
+                    <li key={i} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="min-w-0 truncate font-medium">{w.business_name}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {w.website.replace(/^https?:\/\//, "")} <span className="opacity-70">· from {w.from === "email" ? "email" : "sheet"}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {check.sample.length > 0 && (
               <div>
@@ -199,6 +223,10 @@ export function ImportForm() {
   );
 }
 
-function Line({ children, warn }: { children: React.ReactNode; warn?: boolean }) {
-  return <li className={cn("text-sm", warn ? "font-medium text-amber-700 dark:text-amber-300" : "text-muted-foreground")}>{children}</li>;
+function Line({ children, warn, good }: { children: React.ReactNode; warn?: boolean; good?: boolean }) {
+  return (
+    <li className={cn("text-sm", warn ? "font-medium text-amber-700 dark:text-amber-300" : good ? "font-medium text-emerald-700 dark:text-emerald-300" : "text-muted-foreground")}>
+      {children}
+    </li>
+  );
 }

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { nameKey, parseLeadText, type ImportLead } from "@/lib/hq/call-lead-import";
 import { isMissingTable } from "@/lib/hq/call-leads";
+import { WEBSITE_FROM_KEY } from "@/lib/hq/website-guess";
 import { parsePhone } from "@/lib/hq/phone";
 
 /**
@@ -88,6 +89,12 @@ export async function POST(req: NextRequest) {
     skippedNoName: parsed.skippedNoName,
     skippedNoPhone: parsed.skippedNoPhone,
     unreadablePhones: fresh.filter((l) => !l.phone_e164 && !parsePhone(l.phone).ok).length,
+    // Counted over the genuinely new leads only, not ones already in the CRM.
+    websitesFound: fresh.filter((l) => l.extra[WEBSITE_FROM_KEY]).length,
+    websiteSample: fresh
+      .filter((l) => l.extra[WEBSITE_FROM_KEY])
+      .slice(0, 5)
+      .map((l) => ({ business_name: l.business_name, website: l.website, from: l.extra[WEBSITE_FROM_KEY] })),
     recognised: parsed.recognised,
     extraHeaders: parsed.extraHeaders,
   };
