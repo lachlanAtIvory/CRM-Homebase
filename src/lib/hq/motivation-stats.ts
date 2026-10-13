@@ -29,6 +29,11 @@ export function actorFromEmail(email: string | null | undefined): "ryan" | "lach
   return "system";
 }
 
+/** Capitalised name for display on calendar events, receipts, etc. */
+export function actorDisplayName(actor: "ryan" | "lachlan" | "system"): string {
+  return actor === "system" ? "Team" : actor.charAt(0).toUpperCase() + actor.slice(1);
+}
+
 /** Midnight today in Sydney, as an ISO instant. */
 export function startOfDayAU(): string {
   const d = new Intl.DateTimeFormat("en-CA", {
