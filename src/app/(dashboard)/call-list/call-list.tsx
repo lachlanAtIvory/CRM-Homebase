@@ -1,0 +1,829 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { cn } from "@/lib/utils";
+import {
+  OUTCOME_LABEL, STATUS_LABEL, TAB_LABEL,
+  type CallLead, type CallLeadNote, type LeadStatus, type Outcome, type SalesCallWith, type Tab, type TabCounts,
+} from "@/lib/hq/call-leads";
+import { parsePhone } from "@/lib/hq/phone";
+import {
+  formatSydney, formatViewerLocal, quickTimes, sydneyWallToISO, viewerIsOnSydneyTime,
+} from "@/lib/hq/sydney-time";
+import type { MotivationStats } from "@/lib/hq/motivation-stats";
+import { actorDisplayName, type Actor } from "@/lib/hq/motivation-stats";
+import {
+  Ban, CalendarCheck, CalendarClock, Check, Copy, ExternalLink, Globe, Loader2, Mail,
+  MapPin, PhoneMissed, Search, Star, ThumbsDown, Upload, Voicemail, X, XCircle,
+} from "lucide-react";
+
+export type CallListInitial = {
+  leads: CallLead[];
+  total: number;
+  counts: TabCounts;
+  stats: MotivationStats;
+};
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Helpers
+──────────────────────────────────────────────────────────────────────────── */
+
+/** http(s) links only — scraped data must never become a javascript: link. */
+function safeUrl(raw: string | null | undefined): string | null {
+  const t = (raw ?? "").trim();
+  if (!t) return null;
+  try {
+    const u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(t) ? t : `https://${t}`);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : null;
+  } catch { return null; }
+}
+
+const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+
+function hostOf(url: string): string {
+  try { return new URL(url).host.replace(/^www\./, ""); } catch { return url; }
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* try the older route */ }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+const STATUS_STYLE: Record<LeadStatus, string> = {
+  new:            "bg-muted text-muted-foreground",
+  no_answer:      "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  voicemail:      "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  callback:       "bg-primary/10 text-primary",
+  not_interested: "bg-muted text-muted-foreground",
+  wrong_number:   "bg-muted text-muted-foreground",
+  do_not_call:    "bg-destructive/10 text-destructive",
+  booked:         "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+};
+
+const inputCls =
+  "w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none transition-shadow focus:ring-2 focus:ring-ring";
+const btnCls =
+  "inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-medium transition-all hover:bg-muted/40 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50";
+
+type Toast = { text: string; tone: "ok" | "error" };
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Screen
+──────────────────────────────────────────────────────────────────────────── */
+export function CallList({ initial }: { initial: CallListInitial }) {
+  const [tab, setTab] = useState<Tab>("todo");
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [leads, setLeads] = useState<CallLead[]>(initial.leads);
+  const [total, setTotal] = useState(initial.total);
+  const [counts, setCounts] = useState<TabCounts>(initial.counts);
+  const [stats, setStats] = useState<MotivationStats>(initial.stats);
+  const [selectedId, setSelectedId] = useState<string | null>(initial.leads[0]?.id ?? null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<Outcome | null>(null);
+  const [notes, setNotes] = useState<Record<string, CallLeadNote[]>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+
+  const reqId = useRef(0);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const notesRequested = useRef(new Set<string>());
+  const live = useRef({ tab, q: debouncedQ, selectedId, busy });
+  live.current = { tab, q: debouncedQ, selectedId, busy };
+
+  const lead = useMemo(() => leads.find((l) => l.id === selectedId) ?? null, [leads, selectedId]);
+  const searching = debouncedQ.trim() !== "";
+  const noLeadsAtAll = counts.todo + counts.callbacks + counts.done === 0;
+
+  const say = useCallback((text: string, tone: Toast["tone"] = "ok") => {
+    setToast({ text, tone });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), tone === "error" ? 7000 : 3500);
+  }, []);
+
+  /** Load the list for a tab / search, keeping the current lead selected when it is still there. */
+  const load = useCallback(async (nextTab: Tab, nextQ: string, keepId?: string | null) => {
+    const id = ++reqId.current;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/call-leads?tab=${nextTab}&q=${encodeURIComponent(nextQ)}`);
+      const data = await res.json().catch(() => ({}));
+      if (id !== reqId.current) return;
+      if (!res.ok) { say(data.error ?? "Couldn't load the leads.", "error"); return; }
+      const next = data.leads as CallLead[];
+      setLeads(next);
+      setTotal(data.total as number);
+      setCounts(data.counts as TabCounts);
+      setSelectedId((prev) => {
+        const want = keepId ?? prev;
+        return want && next.some((l) => l.id === want) ? want : next[0]?.id ?? null;
+      });
+    } catch {
+      if (id === reqId.current) say("Couldn't load the leads. Check your connection.", "error");
+    } finally {
+      if (id === reqId.current) setLoading(false);
+    }
+  }, [say]);
+
+  // Debounce the search box
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // Reload when the tab or search changes (the first render uses the server's data)
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    load(tab, debouncedQ);
+  }, [tab, debouncedQ, load]);
+
+  // Refresh every minute so "callback due" stays honest
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!live.current.busy) load(live.current.tab, live.current.q, live.current.selectedId);
+    }, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  // Fetch the selected lead's history once
+  useEffect(() => {
+    if (!selectedId || notesRequested.current.has(selectedId)) return;
+    notesRequested.current.add(selectedId);
+    fetch(`/api/call-leads/${selectedId}/notes`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.notes) setNotes((n) => ({ ...n, [selectedId]: d.notes })); })
+      .catch(() => notesRequested.current.delete(selectedId));
+  }, [selectedId]);
+
+  useEffect(() => () => { clearTimeout(toastTimer.current); clearTimeout(copiedTimer.current); }, []);
+
+  const copyNumber = useCallback(async (l: CallLead) => {
+    const { copy } = parsePhone(l.phone);
+    if (!copy) { say("This lead has no number to copy.", "error"); return; }
+    if (await copyText(copy)) {
+      setCopiedId(l.id);
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopiedId(null), 2200);
+    } else {
+      say("Couldn't copy. Select the number and copy it by hand.", "error");
+    }
+  }, [say]);
+
+  // "C" copies the number when you're not typing in a box
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "c" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+      if (lead) { e.preventDefault(); copyNumber(lead); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lead, copyNumber]);
+
+  /** Send a note or call outcome. Resolves true on success so the form can close. */
+  const submit = useCallback(async (
+    outcome: Outcome,
+    extra: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string } = {},
+  ): Promise<boolean> => {
+    if (!lead || live.current.busy) return false;
+    const leadId = lead.id;
+    // Where to go next: the lead after this one in the current list
+    const at = leads.findIndex((l) => l.id === leadId);
+    const nextId = leads[at + 1]?.id ?? leads[at - 1]?.id ?? null;
+
+    setBusy(outcome);
+    try {
+      const res = await fetch(`/api/call-leads/${leadId}/outcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome, note: drafts[leadId] ?? "", ...extra }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { say(data.error ?? "That didn't save. Try again.", "error"); return false; }
+
+      if (data.stats) setStats(data.stats as MotivationStats);
+      if (data.counts) setCounts(data.counts as TabCounts);
+      if (data.note) setNotes((n) => ({ ...n, [leadId]: [data.note as CallLeadNote, ...(n[leadId] ?? [])] }));
+      setDrafts((d) => ({ ...d, [leadId]: "" }));
+      say(data.warning ? String(data.warning) : outcome === "note" ? "Note saved." : `${OUTCOME_LABEL[outcome]}. Next lead.`, data.warning ? "error" : "ok");
+
+      if (outcome === "note") {
+        setLeads((ls) => ls.map((l) => (l.id === leadId ? (data.lead as CallLead) : l)));
+      } else {
+        await load(live.current.tab, live.current.q, nextId);
+        // `load` keeps a still-listed lead selected; when this one left the list, move on
+        setSelectedId((cur) => (cur === leadId && nextId ? nextId : cur));
+      }
+      return true;
+    } catch {
+      say("Couldn't reach the server. Check your connection and try again.", "error");
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }, [lead, leads, drafts, load, say]);
+
+  const dueNow = counts.due;
+
+  return (
+    <div className="space-y-4">
+      {/* Today strip */}
+      <div className="flex flex-wrap items-stretch gap-3">
+        <StatTile label="Calls today" value={stats.calls} />
+        <StatTile label="Callbacks set" value={stats.callbacks} />
+        <StatTile label="Sales calls booked" value={stats.booked} gold />
+        <div className="ml-auto flex items-center">
+          <Link href="/call-list/import" className={btnCls}>
+            <Upload size={13} /> Import leads
+          </Link>
+        </div>
+      </div>
+
+      {dueNow > 0 && (
+        <button
+          type="button"
+          onClick={() => { setQ(""); setDebouncedQ(""); setTab("callbacks"); }}
+          className="flex w-full items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-left text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
+        >
+          <CalendarClock size={15} />
+          {dueNow} callback{dueNow === 1 ? " is" : "s are"} due now. Open Callbacks
+        </button>
+      )}
+
+      {noLeadsAtAll && !searching ? (
+        <div className="rounded-xl border bg-card p-10 text-center ring-1 ring-foreground/5">
+          <p className="text-base font-semibold">No leads in the call list yet</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            Copy the rows from the scraped Google Sheet (include the header row) and paste them in. Each lead
+            keeps its own notes and call history.
+          </p>
+          <Link href="/call-list/import" className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.97]">
+            <Upload size={14} /> Import leads
+          </Link>
+        </div>
+      ) : (
+        <div className="grid items-start gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
+          {/* ── The list ─────────────────────────────────────────────── */}
+          <section className="flex flex-col overflow-hidden rounded-xl border bg-card ring-1 ring-foreground/5 lg:sticky lg:top-0 lg:h-[calc(100vh-15rem)] lg:min-h-[420px]">
+            <div className="space-y-3 border-b p-3">
+              <div className="relative">
+                <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="search"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search name or number"
+                  aria-label="Search leads"
+                  className={cn(inputCls, "pl-8")}
+                />
+              </div>
+              {searching ? (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold">Search results ({total.toLocaleString("en-AU")})</span>
+                  <button type="button" onClick={() => setQ("")} className="font-semibold text-primary hover:underline">Clear</button>
+                </div>
+              ) : (
+                <div role="tablist" className="grid grid-cols-3 gap-1 rounded-lg bg-muted/60 p-1">
+                  {(["todo", "callbacks", "done"] as Tab[]).map((t) => (
+                    <button
+                      key={t}
+                      role="tab"
+                      type="button"
+                      aria-selected={tab === t}
+                      onClick={() => setTab(t)}
+                      className={cn(
+                        "rounded-md px-2 py-1.5 text-xs font-semibold transition-all",
+                        tab === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {TAB_LABEL[t]} <span className="tabular-nums opacity-70">{counts[t].toLocaleString("en-AU")}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="relative min-h-0 flex-1 overflow-y-auto">
+              {loading && (
+                <div className="absolute right-3 top-2 text-muted-foreground"><Loader2 size={14} className="animate-spin" /></div>
+              )}
+              {leads.length === 0 ? (
+                <p className="p-6 text-center text-sm text-muted-foreground">
+                  {searching ? "No leads match that search." : tab === "todo" ? "Nothing left to call. Nice work." : tab === "callbacks" ? "No callbacks waiting." : "Nothing finished yet."}
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {leads.map((l) => (
+                    <LeadRow key={l.id} lead={l} selected={l.id === selectedId} onSelect={() => setSelectedId(l.id)} />
+                  ))}
+                </ul>
+              )}
+              {total > leads.length && (
+                <p className="border-t p-3 text-center text-xs text-muted-foreground">
+                  Showing the first {leads.length} of {total.toLocaleString("en-AU")}. Search to find a specific business.
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* ── The lead ─────────────────────────────────────────────── */}
+          {lead ? (
+            <LeadDetail
+              key={lead.id}
+              lead={lead}
+              history={notes[lead.id]}
+              draft={drafts[lead.id] ?? ""}
+              onDraft={(v) => setDrafts((d) => ({ ...d, [lead.id]: v }))}
+              busy={busy}
+              copied={copiedId === lead.id}
+              onCopy={() => copyNumber(lead)}
+              onSubmit={submit}
+            />
+          ) : (
+            <div className="rounded-xl border bg-card p-10 text-center text-sm text-muted-foreground ring-1 ring-foreground/5">
+              {leads.length ? "Pick a lead from the list." : "Nothing to show here."}
+            </div>
+          )}
+        </div>
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          className={cn(
+            "fixed bottom-6 left-1/2 z-50 max-w-[90vw] -translate-x-1/2 rounded-xl px-4 py-2.5 text-sm font-semibold shadow-lg animate-in fade-in slide-in-from-bottom-2",
+            toast.tone === "error" ? "bg-destructive text-white" : "bg-foreground text-background",
+          )}
+        >
+          {toast.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   List row
+──────────────────────────────────────────────────────────────────────────── */
+function LeadRow({ lead, selected, onSelect }: { lead: CallLead; selected: boolean; onSelect: () => void }) {
+  const phone = parsePhone(lead.phone);
+  const overdue = lead.status === "callback" && lead.callback_at && new Date(lead.callback_at).getTime() <= Date.now();
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={selected}
+        className={cn(
+          "flex w-full items-start gap-3 px-3.5 py-3 text-left transition-colors",
+          selected ? "bg-primary/5" : "hover:bg-muted/40",
+        )}
+      >
+        <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", selected ? "bg-primary" : "bg-transparent")} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold">{lead.business_name}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {[lead.category, phone.display].filter(Boolean).join(" · ")}
+          </span>
+          {lead.status === "callback" && lead.callback_at && (
+            <span className={cn("mt-0.5 block text-xs font-semibold", overdue ? "text-destructive" : "text-primary")}>
+              {overdue ? "Due now · " : ""}{formatSydney(lead.callback_at)}
+            </span>
+          )}
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-1">
+          {lead.status !== "new" && (
+            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", STATUS_STYLE[lead.status])}>
+              {STATUS_LABEL[lead.status]}
+            </span>
+          )}
+          {lead.attempts > 0 && (
+            <span className="text-[10px] tabular-nums text-muted-foreground">{lead.attempts} {lead.attempts === 1 ? "call" : "calls"}</span>
+          )}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function StatTile({ label, value, gold }: { label: string; value: number; gold?: boolean }) {
+  return (
+    <div className="min-w-[130px] rounded-xl border bg-card px-4 py-2.5 ring-1 ring-foreground/5">
+      <div className="text-[11px] font-semibold text-muted-foreground">{label}</div>
+      <div className={cn("text-2xl font-bold tabular-nums leading-tight", gold && value > 0 && "text-amber-600")}>{value}</div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Lead detail — number, notes, outcomes
+──────────────────────────────────────────────────────────────────────────── */
+type Panel = null | "callback" | "booked";
+
+function LeadDetail({
+  lead, history, draft, onDraft, busy, copied, onCopy, onSubmit,
+}: {
+  lead: CallLead;
+  history: CallLeadNote[] | undefined;
+  draft: string;
+  onDraft: (v: string) => void;
+  busy: Outcome | null;
+  copied: boolean;
+  onCopy: () => void;
+  onSubmit: (outcome: Outcome, extra?: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string }) => Promise<boolean>;
+}) {
+  const phone = parsePhone(lead.phone);
+  const site = safeUrl(lead.website);
+  const maps = safeUrl(lead.google_maps_url);
+  const [panel, setPanel] = useState<Panel>(null);
+  const isBooked = lead.status === "booked";
+  const stop = lead.status === "do_not_call" || lead.status === "wrong_number";
+
+  return (
+    <section className="space-y-4">
+      {/* Header + number */}
+      <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-xl font-bold leading-tight">{lead.business_name}</h2>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+              {lead.category && <span>{lead.category}</span>}
+              {lead.rating != null && (
+                <span className="inline-flex items-center gap-1">
+                  <Star size={12} className="fill-amber-400 text-amber-400" />
+                  {lead.rating.toFixed(1)}{lead.review_count != null && ` (${lead.review_count.toLocaleString("en-AU")} reviews)`}
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className={cn("rounded-full px-2.5 py-1 font-bold", STATUS_STYLE[lead.status])}>{STATUS_LABEL[lead.status]}</span>
+            {lead.attempts > 0 && (
+              <span className="text-muted-foreground">
+                {lead.attempts} {lead.attempts === 1 ? "call" : "calls"}
+                {lead.last_called_at && ` · last ${formatSydney(lead.last_called_at)}`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {stop && (
+          <p className="mt-3 rounded-lg bg-destructive/10 px-3 py-2 text-sm font-semibold text-destructive">
+            {lead.status === "do_not_call" ? "Do not call this number again." : "Marked as a wrong number."}
+          </p>
+        )}
+        {lead.status === "callback" && lead.callback_at && (
+          <p className="mt-3 rounded-lg bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">
+            Callback promised for {formatSydney(lead.callback_at)} Sydney time. Press Callback to reschedule, or log the result below.
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={onCopy}
+          disabled={!phone.copy}
+          title="Copy this number for the dialer (shortcut: C)"
+          className={cn(
+            "group mt-4 flex w-full items-center justify-between gap-3 rounded-xl border-2 px-5 py-4 text-left transition-all active:scale-[0.99]",
+            copied ? "border-emerald-500 bg-emerald-500/10" : "border-primary/30 bg-primary/5 hover:border-primary hover:bg-primary/10",
+          )}
+        >
+          <span>
+            <span className="block font-mono text-3xl font-bold tracking-tight tabular-nums">{phone.display || "No number"}</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              {copied ? `Copied ${phone.copy}` : phone.ok ? `Click to copy ${phone.copy}` : "Click to copy as typed"}
+            </span>
+          </span>
+          <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold", copied ? "bg-emerald-600 text-white" : "bg-primary text-primary-foreground")}>
+            {copied ? <Check size={15} /> : <Copy size={15} />}
+            {copied ? "Copied" : "Copy"}
+          </span>
+        </button>
+        {!phone.ok && phone.display && (
+          <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+            This number doesn&apos;t look complete. Check it before dialling.
+          </p>
+        )}
+
+        {/* About the business */}
+        <dl className="mt-4 grid gap-x-6 gap-y-2.5 text-sm sm:grid-cols-2">
+          {lead.address && (
+            <Info icon={<MapPin size={14} />} label="Address">
+              {lead.address}
+              {maps && (
+                <a href={maps} target="_blank" rel="noopener noreferrer" className="ml-2 inline-flex items-center gap-0.5 text-xs font-semibold text-primary hover:underline">
+                  Maps <ExternalLink size={11} />
+                </a>
+              )}
+            </Info>
+          )}
+          {lead.website && (
+            <Info icon={<Globe size={14} />} label="Website">
+              {site ? (
+                <a href={site} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
+                  {hostOf(site)} <ExternalLink size={11} />
+                </a>
+              ) : lead.website}
+            </Info>
+          )}
+          {lead.email && (
+            <Info icon={<Mail size={14} />} label="Email">
+              {EMAIL_RE.test(lead.email) ? <a href={`mailto:${lead.email}`} className="font-medium text-primary hover:underline">{lead.email}</a> : lead.email}
+            </Info>
+          )}
+        </dl>
+        {Object.keys(lead.extra ?? {}).length > 0 && (
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground">More from the sheet</summary>
+            <dl className="mt-2 grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+              {Object.entries(lead.extra).map(([k, v]) => (
+                <div key={k}>
+                  <dt className="text-[11px] font-semibold text-muted-foreground">{k}</dt>
+                  <dd className="break-words">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
+        )}
+      </div>
+
+      {/* Notes + outcome */}
+      <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
+        <label htmlFor="call-notes" className="mb-1.5 block text-xs font-semibold text-foreground/80">
+          Call notes
+        </label>
+        <textarea
+          id="call-notes"
+          value={draft}
+          onChange={(e) => onDraft(e.target.value)}
+          placeholder="What did they say? Who answers the phones, missed calls, how busy they are, best time to call…"
+          className={cn(inputCls, "min-h-[110px] resize-y")}
+        />
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">Your notes are saved with whichever result you press below.</p>
+          <button
+            type="button"
+            onClick={() => { void onSubmit("note"); }}
+            disabled={!draft.trim() || busy !== null}
+            className={btnCls}
+          >
+            {busy === "note" ? <Loader2 size={13} className="animate-spin" /> : null} Save note only
+          </button>
+        </div>
+
+        <div className="mt-4 border-t pt-4">
+          <div className="mb-2 text-xs font-semibold text-foreground/80">How did the call go?</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <OutcomeButton icon={<PhoneMissed size={14} />} label="No answer" busy={busy === "no_answer"} disabled={busy !== null} onClick={() => { void onSubmit("no_answer"); }} />
+            <OutcomeButton icon={<Voicemail size={14} />} label="Voicemail" busy={busy === "voicemail"} disabled={busy !== null} onClick={() => { void onSubmit("voicemail"); }} />
+            <OutcomeButton icon={<ThumbsDown size={14} />} label="Not interested" busy={busy === "not_interested"} disabled={busy !== null} onClick={() => { void onSubmit("not_interested"); }} />
+            <OutcomeButton icon={<XCircle size={14} />} label="Wrong number" busy={busy === "wrong_number"} disabled={busy !== null} onClick={() => { void onSubmit("wrong_number"); }} />
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setPanel(panel === "callback" ? null : "callback")}
+              disabled={busy !== null}
+              aria-expanded={panel === "callback"}
+              className={cn(
+                "inline-flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-2.5 text-sm font-semibold transition-all active:scale-[0.98] disabled:opacity-50",
+                panel === "callback" ? "border-primary bg-primary/10 text-primary" : "border-primary/30 text-primary hover:border-primary hover:bg-primary/5",
+              )}
+            >
+              <CalendarClock size={15} /> Set a callback
+            </button>
+            <button
+              type="button"
+              onClick={() => setPanel(panel === "booked" ? null : "booked")}
+              disabled={busy !== null || isBooked}
+              aria-expanded={panel === "booked"}
+              className={cn(
+                "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold shadow-sm transition-all active:scale-[0.98] disabled:opacity-60",
+                "bg-primary text-primary-foreground hover:bg-primary/90",
+              )}
+            >
+              <CalendarCheck size={15} /> {isBooked ? "Sales call booked" : "Book a sales call"}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => { if (window.confirm(`Mark ${lead.business_name} as do not call?`)) void onSubmit("do_not_call"); }}
+            disabled={busy !== null || lead.status === "do_not_call"}
+            className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-destructive disabled:opacity-50"
+          >
+            <Ban size={12} /> They asked not to be called again
+          </button>
+
+          {panel === "callback" && (
+            <CallbackForm
+              busy={busy === "callback"}
+              onCancel={() => setPanel(null)}
+              onSave={async (iso) => { if (await onSubmit("callback", { when: iso })) setPanel(null); }}
+            />
+          )}
+          {panel === "booked" && (
+            <BookingForm
+              lead={lead}
+              hasNote={draft.trim() !== ""}
+              busy={busy === "booked"}
+              onCancel={() => setPanel(null)}
+              onSave={async (extra) => { if (await onSubmit("booked", extra)) setPanel(null); }}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* History */}
+      <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
+        <h3 className="mb-3 text-sm font-semibold">History</h3>
+        {!history ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No calls or notes yet. Anything you log shows up here.</p>
+        ) : (
+          <ol className="space-y-3">
+            {history.map((n) => (
+              <li key={n.id} className="border-l-2 border-primary/20 pl-3">
+                <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                  <span className="rounded-full bg-muted px-2 py-0.5 font-bold text-foreground/80">{OUTCOME_LABEL[n.outcome]}</span>
+                  <span>{formatSydney(n.occurred_at)}</span>
+                  <span>· {actorDisplayName(n.actor as Actor, n.created_by)}</span>
+                </div>
+                {n.body && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{n.body}</p>}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Info({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-0.5 text-muted-foreground" title={label}>{icon}</span>
+      <div className="min-w-0 break-words">{children}</div>
+    </div>
+  );
+}
+
+function OutcomeButton({ icon, label, onClick, busy, disabled }: {
+  icon: React.ReactNode; label: string; onClick: () => void; busy: boolean; disabled: boolean;
+}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className="inline-flex items-center justify-center gap-1.5 rounded-lg border bg-background px-3 py-2.5 text-[13px] font-semibold transition-all hover:border-primary/50 hover:bg-primary/5 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50">
+      {busy ? <Loader2 size={14} className="animate-spin" /> : icon} {label}
+    </button>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Date/time picker that always means Sydney time
+──────────────────────────────────────────────────────────────────────────── */
+function SydneyTimeField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [picks] = useState(() => quickTimes());
+  const iso = value ? sydneyWallToISO(value) : null;
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-semibold text-foreground/80">
+        When <span className="font-normal text-muted-foreground">(Sydney time)</span>
+      </label>
+      <input
+        type="datetime-local"
+        required
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={inputCls}
+      />
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {picks.map((p) => (
+          <button key={p.label} type="button" onClick={() => onChange(p.value)} className="rounded-full border bg-background px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:border-primary hover:text-primary">
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {iso && (
+        <p className="mt-2 text-xs font-semibold text-primary">
+          {formatSydney(iso)} Sydney time
+          {!viewerIsOnSydneyTime(iso) && <span className="font-normal text-muted-foreground"> · that is {formatViewerLocal(iso)} where you are</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Bring a freshly opened form into view — it opens below the fold on most screens. */
+function useScrollIntoView<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => { ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, []);
+  return ref;
+}
+
+function CallbackForm({ busy, onCancel, onSave }: {
+  busy: boolean; onCancel: () => void; onSave: (iso: string) => void | Promise<void>;
+}) {
+  const [when, setWhen] = useState("");
+  const iso = when ? sydneyWallToISO(when) : null;
+  const ref = useScrollIntoView<HTMLFormElement>();
+  return (
+    <form
+      ref={ref}
+      className="mt-4 space-y-3 rounded-xl border bg-muted/30 p-4 animate-in fade-in slide-in-from-top-1"
+      onSubmit={(e) => { e.preventDefault(); if (iso) void onSave(iso); }}
+    >
+      <p className="text-sm font-semibold">When should we call them back?</p>
+      <SydneyTimeField value={when} onChange={setWhen} />
+      <p className="text-xs text-muted-foreground">It appears in your Callbacks tab and flags when it&apos;s due. Your notes above are saved with it.</p>
+      <div className="flex gap-2">
+        <button type="submit" disabled={!iso || busy} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.97] disabled:opacity-50">
+          {busy && <Loader2 size={14} className="animate-spin" />} Save callback
+        </button>
+        <button type="button" onClick={onCancel} disabled={busy} className={btnCls}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function BookingForm({ lead, hasNote, busy, onCancel, onSave }: {
+  lead: CallLead; hasNote: boolean; busy: boolean; onCancel: () => void;
+  onSave: (extra: { when: string; with: SalesCallWith; contact_name?: string; email?: string }) => void | Promise<void>;
+}) {
+  const [when, setWhen] = useState("");
+  const [withWhom, setWithWhom] = useState<SalesCallWith | "">("");
+  const [contact, setContact] = useState("");
+  const [email, setEmail] = useState(lead.email ?? "");
+  const iso = when ? sydneyWallToISO(when) : null;
+  const ready = !!iso && withWhom !== "";
+  const who = withWhom === "either" ? "Ryan or Lachlan" : withWhom ? withWhom.charAt(0).toUpperCase() + withWhom.slice(1) : "Ryan or Lachlan";
+  const ref = useScrollIntoView<HTMLFormElement>();
+
+  return (
+    <form
+      ref={ref}
+      className="mt-4 space-y-4 rounded-xl border bg-muted/30 p-4 animate-in fade-in slide-in-from-top-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (iso && withWhom) void onSave({ when: iso, with: withWhom, contact_name: contact.trim() || undefined, email: email.trim() || undefined });
+      }}
+    >
+      <p className="text-sm font-semibold">Book the sales call</p>
+
+      <div>
+        <span className="mb-1.5 block text-xs font-semibold text-foreground/80">Who is it with?</span>
+        <div role="radiogroup" aria-label="Who is the sales call with" className="inline-flex gap-0.5 rounded-full border bg-background p-[3px]">
+          {([["ryan", "Ryan"], ["lachlan", "Lachlan"], ["either", "Either"]] as [SalesCallWith, string][]).map(([v, label]) => (
+            <label key={v} className="relative block">
+              <input type="radio" name="with" value={v} checked={withWhom === v} onChange={() => setWithWhom(v)} className="peer absolute inset-0 m-0 h-full w-full cursor-pointer opacity-0" />
+              <span className="block rounded-full px-4 py-1.5 text-[13px] font-semibold text-muted-foreground transition-colors peer-checked:bg-primary peer-checked:text-primary-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
+                {label}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <SydneyTimeField value={when} onChange={setWhen} />
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold text-foreground/80">Who will be on the call?</label>
+          <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Dr Sarah Chen" className={inputCls} />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold text-foreground/80">Their email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="sarah@clinic.com.au" className={inputCls} />
+        </div>
+      </div>
+
+      <p className={cn("rounded-lg px-3 py-2 text-xs", hasNote ? "bg-muted text-muted-foreground" : "bg-amber-500/10 font-semibold text-amber-800 dark:text-amber-300")}>
+        {hasNote
+          ? `${who} will see your notes and everything logged on this lead before the call.`
+          : `Add what you learned in the notes box first (pain points, who owns the phones). ${who} reads it before the call.`}
+      </p>
+
+      <div className="flex gap-2">
+        <button type="submit" disabled={!ready || busy} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.97] disabled:opacity-50">
+          {busy && <Loader2 size={14} className="animate-spin" />} Book sales call
+        </button>
+        <button type="button" onClick={onCancel} disabled={busy} className={btnCls}>
+          <X size={13} /> Cancel
+        </button>
+      </div>
+    </form>
+  );
+}

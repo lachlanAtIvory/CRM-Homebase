@@ -22,16 +22,31 @@ export type MotivationStats = {
   weekBooked: number;
 };
 
-export function actorFromEmail(email: string | null | undefined): "ryan" | "lachlan" | "system" {
+export type Actor = "ryan" | "lachlan" | "caller" | "system";
+
+/**
+ * Who a signed-in user is on the scoreboard. Ryan and Lachlan are matched by
+ * their email; anyone else who can sign in is the cold caller. "system" is
+ * only for events with no signed-in user (n8n ingest, etc.).
+ */
+export function actorFromEmail(email: string | null | undefined): Actor {
   const e = (email ?? "").toLowerCase();
   if (e.includes("lachlan")) return "lachlan";
   if (e.includes("ryan"))    return "ryan";
-  return "system";
+  return e ? "caller" : "system";
 }
 
-/** Capitalised name for display on calendar events, receipts, etc. */
-export function actorDisplayName(actor: "ryan" | "lachlan" | "system"): string {
-  return actor === "system" ? "Team" : actor.charAt(0).toUpperCase() + actor.slice(1);
+/**
+ * Capitalised name for calendar events, receipts, etc. The caller shows as
+ * the first part of their email ("aaron.d@…" -> "Aaron"), else "Caller".
+ */
+export function actorDisplayName(actor: Actor, email?: string | null): string {
+  if (actor === "system") return "Team";
+  if (actor === "caller") {
+    const first = (email ?? "").split("@")[0].split(/[._\-+]/)[0];
+    return first ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : "Caller";
+  }
+  return actor.charAt(0).toUpperCase() + actor.slice(1);
 }
 
 /** Midnight today in Sydney, as an ISO instant. */
