@@ -1,12 +1,11 @@
 import { QuoteBuilder } from "./quote-builder";
 
 /**
- * Quote Builder — native CRM version of the internal pricing calculator.
+ * Quote Builder — build a quote live on a sales call.
  *
- * Pricing engine lives in src/lib/hq/quote-math.ts (verified 1:1 against the
- * original standalone tool); tunables in src/lib/hq/quote-config.ts. Tuned
- * assumptions persist to localStorage under the same key as the old tool,
- * so previously saved values carry over.
+ * Prices and rules live in src/lib/hq/quote-config.ts (change a number there
+ * and the whole builder follows); the pricing engine is src/lib/hq/quote-math.ts.
+ * Drafts and saved quotes are kept in this browser's localStorage.
  */
 export default function QuotePage() {
   return <QuoteBuilder />;
