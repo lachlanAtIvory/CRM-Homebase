@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { QUIZ_BANK, type QuizQuestion } from "@/lib/hq/motivation-quiz";
 import type { DialResult, MotivationHistory, MotivationStats } from "@/lib/hq/motivation-stats";
+import { sydneyWallToISO } from "@/lib/hq/sydney-time";
 import {
   Brain, CalendarCheck2, CheckCircle2, Flame, Loader2, Phone, PhoneForwarded,
   PhoneMissed, RotateCcw, Sunset, Timer, Voicemail, Volume2, VolumeX, X, XCircle,
@@ -892,7 +893,7 @@ function BookedModal({
           e.preventDefault();
           if (!valid) return;
           const { whenLocal, ...rest } = lead;
-          onSubmit({ ...rest, when: new Date(whenLocal).toISOString() });
+          onSubmit({ ...rest, when: sydneyWallToISO(whenLocal) ?? "" });
         }}
       >
         <label className="block">
@@ -900,7 +901,7 @@ function BookedModal({
           <input required autoFocus className={input} value={lead.business_name} onChange={set("business_name")} placeholder="Breeze Dental Helensvale" />
         </label>
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-foreground/80">Sales call — date &amp; time <span className="text-destructive">*</span> <span className="font-normal text-muted-foreground">(&ldquo;Thursday 2pm or Friday 10am?&rdquo;)</span></span>
+          <span className="mb-1 block text-xs font-semibold text-foreground/80">Sales call — date &amp; time <span className="text-destructive">*</span> <span className="font-normal text-muted-foreground">(Sydney time. &ldquo;Thursday 2pm or Friday 10am?&rdquo;)</span></span>
           <input required type="datetime-local" className={input} value={lead.whenLocal} onChange={set("whenLocal")} />
         </label>
         <div className="grid grid-cols-2 gap-3">
@@ -966,7 +967,7 @@ function CallbackModal({
         onSubmit={(e) => {
           e.preventDefault();
           if (!valid) return;
-          onSubmit({ name: cb.name, phone: cb.phone, note: cb.note, when: new Date(cb.whenLocal).toISOString() });
+          onSubmit({ name: cb.name, phone: cb.phone, note: cb.note, when: sydneyWallToISO(cb.whenLocal) ?? "" });
         }}
       >
         <div className="grid grid-cols-2 gap-3">
@@ -980,7 +981,7 @@ function CallbackModal({
           </label>
         </div>
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-foreground/80">Call them back — date &amp; time <span className="text-destructive">*</span></span>
+          <span className="mb-1 block text-xs font-semibold text-foreground/80">Call them back — date &amp; time <span className="text-destructive">*</span> <span className="font-normal text-muted-foreground">(Sydney time)</span></span>
           <input required type="datetime-local" className={input} value={cb.whenLocal} onChange={set("whenLocal")} />
         </label>
         <label className="block">

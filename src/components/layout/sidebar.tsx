@@ -15,6 +15,7 @@ import {
   BookOpen,
   Calculator,
   Flame,
+  PhoneCall,
   Link2,
   CalendarDays,
   BarChart3,
@@ -27,6 +28,7 @@ import {
 const NAV = [
   { href: "/",                label: "Home",            icon: LayoutDashboard },
   { href: "/motivation",      label: "Motivation",      icon: Flame           },
+  { href: "/call-list",       label: "Call List",       icon: PhoneCall       },
   { href: "/pipeline",        label: "Pipeline",        icon: Kanban          },
   { href: "/clients",         label: "Clients",         icon: Users           },
   { href: "/applications",    label: "Applications",    icon: FileText        },
