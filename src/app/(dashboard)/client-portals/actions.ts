@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { CLIENT_PORTALS_ENABLED } from "@/lib/hq/feature-flags";
 
 /**
  * Regenerate a client's portal token — instantly invalidates the old
@@ -9,6 +10,10 @@ import { createClient } from "@/lib/supabase/server";
  * rotate it on a schedule.
  */
 export async function regeneratePortalToken(clientId: string) {
+  // The page is hidden while portals are off, but a server action can still be
+  // called directly — refuse it too.
+  if (!CLIENT_PORTALS_ENABLED) throw new Error("Client portals are switched off.");
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");

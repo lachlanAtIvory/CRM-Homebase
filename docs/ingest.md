@@ -1,7 +1,7 @@
 # HQ Ingest API — the one door for n8n
 
 Every n8n workflow writes into the CRM through a single endpoint. One
-contract, one auth header, six tables.
+contract, one auth header, five tables.
 
 ```
 POST https://<crm-domain>/api/ingest
@@ -13,7 +13,7 @@ x-ivory-key: <IVORY_INGEST_KEY>       ← shared secret, set in Vercel + n8n
 
 ```json
 {
-  "table":  "calls",                   // required — see allowlist below
+  "table":  "prospects",               // required — see allowlist below
   "action": "insert",                  // optional — "insert" (default) or "update"
   "match":  { "id": "..." },           // required for updates — which rows to touch
   "data":   { "...": "..." }           // required — column values
@@ -35,10 +35,11 @@ so.
 
 ## Tables + required insert fields
 
+> Call data (Retell `call_ended`, chat widget) is **not** ingested here any more — a separate CRM handles it.
+
 | Table | Required | Notes |
 |---|---|---|
 | `hq_clients` | `name` | Signed clients (Kenny, dental). `vertical`: physio/chiro/dental/cosmetic/other |
-| `calls` | `source` | retell / chat_widget / other. `client_id` optional FK → hq_clients |
 | `prospects` | `business_name` | `pipeline_stage`: new/mystery_shopped/contacted/replied/demo_booked/won/lost |
 | `prospect_events` | `prospect_id`, `type` | type: mystery_call/cold_call/email_sent/email_opened/email_replied/dm_sent/demo/note |
 | `outreach_events` | `prospect_id`, `channel`, `event` | channel: email/phone/dm · event: sent/opened/clicked/replied/bounced/unsubscribed |
@@ -65,28 +66,6 @@ curl -s -X POST "$CRM/api/ingest" \
       "vertical": "physio",
       "status": "active",
       "cliniko_or_pms_type": "cliniko"
-    }
-  }'
-```
-
-### calls — Retell call_ended → CRM
-
-```bash
-curl -s -X POST "$CRM/api/ingest" \
-  -H "content-type: application/json" -H "x-ivory-key: $KEY" \
-  -d '{
-    "table": "calls",
-    "data": {
-      "client_id": "<hq_clients uuid>",
-      "source": "retell",
-      "external_call_id": "retell_abc123",
-      "caller_number": "+61400000000",
-      "started_at": "2026-07-14T09:30:00+10:00",
-      "duration_seconds": 142,
-      "outcome": "booked",
-      "summary": "New patient booked Thursday 2pm with Sarah.",
-      "transcript": "…full transcript…",
-      "raw_payload": { "retell": "event json here" }
     }
   }'
 ```

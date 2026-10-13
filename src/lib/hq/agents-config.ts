@@ -9,9 +9,6 @@
  * Field types: "text" | "date" | "textarea" | "select".
  * Selects use `options` (static list) or `optionsFrom: "hq_clients"`
  * (dropdown of signed clients, value = client uuid).
- *
- * `kind: "status"` renders a status card (no form) with a single run button —
- * used by the Call Monitor.
  */
 
 export type AgentFieldType = "text" | "number" | "date" | "textarea" | "select";
@@ -32,7 +29,7 @@ export type AgentConfig = {
   name:         string;
   description:  string;
   webhookEnv:   string;         // env var NAME holding the n8n webhook URL
-  kind:         "form" | "status";
+  kind:         "form";
   fields:       AgentField[];
   submitLabel?: string;
   // true = don't wait for the n8n callback; the card confirms "sent" and the
@@ -88,14 +85,5 @@ export const AGENTS: AgentConfig[] = [
       { key: "topic", label: "Topic", type: "textarea", required: true, placeholder: "Why missed calls cost clinics more than they think…" },
     ],
     submitLabel: "Draft post",
-  },
-  {
-    id:          "call_monitor",
-    name:        "Call Monitor",
-    description: "Checks that call data is still flowing in for every client.",
-    webhookEnv:  "N8N_WEBHOOK_CALLMONITOR",
-    kind:        "status",
-    fields:      [],
-    submitLabel: "Run check",
   },
 ];

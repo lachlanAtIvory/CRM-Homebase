@@ -4,7 +4,6 @@ import { EarningsTableWidget } from "./_components/earnings-table-widget";
 import { PipelineFunnelWidget } from "./_components/pipeline-funnel-widget";
 import { UpcomingMeetingsWidget } from "./_components/upcoming-meetings-widget";
 import { UpcomingTasksWidget } from "./_components/upcoming-tasks-widget";
-import { AgentActivityWidget } from "./_components/agent-activity-widget";
 
 export default function HomePage() {
   return (
@@ -15,7 +14,6 @@ export default function HomePage() {
       <PipelineFunnelWidget />
       <UpcomingMeetingsWidget className="md:col-span-2" />
       <UpcomingTasksWidget className="md:col-span-3" />
-      <AgentActivityWidget className="md:col-span-3" />
     </div>
   );
 }

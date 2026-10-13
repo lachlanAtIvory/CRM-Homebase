@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AGENTS, type AgentConfig, type AgentField } from "@/lib/hq/agents-config";
 import { cn } from "@/lib/utils";
 import {
-  Bot, CheckCircle2, ExternalLink, Loader2, PhoneCall, XCircle,
+  Bot, CheckCircle2, ExternalLink, Loader2, XCircle,
 } from "lucide-react";
 
 type Client = { id: string; name: string };
@@ -19,12 +19,7 @@ type JobState = {
 const POLL_MS      = 2500;
 const POLL_MAX_MIN = 10; // stop polling after 10 min; n8n jobs shouldn't run longer
 
-export function MissionControl({
-  clients, latestCallByClient,
-}: {
-  clients:            Client[];
-  latestCallByClient: Record<string, string>;
-}) {
+export function MissionControl({ clients }: { clients: Client[] }) {
   // One active job per agent card; history stays in the jobs table.
   const [jobs, setJobs] = useState<Record<string, JobState>>({});
   const timersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
@@ -107,26 +102,15 @@ export function MissionControl({
         finishes — you can leave the page and check the jobs table later.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
-        {AGENTS.map((agent) =>
-          agent.kind === "status" ? (
-            <StatusCard
-              key={agent.id}
-              agent={agent}
-              clients={clients}
-              latestCallByClient={latestCallByClient}
-              job={jobs[agent.id]}
-              onRun={() => run(agent, {})}
-            />
-          ) : (
-            <FormCard
-              key={agent.id}
-              agent={agent}
-              clients={clients}
-              job={jobs[agent.id]}
-              onRun={(data) => run(agent, data)}
-            />
-          ),
-        )}
+        {AGENTS.map((agent) => (
+          <FormCard
+            key={agent.id}
+            agent={agent}
+            clients={clients}
+            job={jobs[agent.id]}
+            onRun={(data) => run(agent, data)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -181,60 +165,6 @@ function FormCard({
           </button>
         </div>
       </form>
-    </div>
-  );
-}
-
-// ─── Status card (Call Monitor) ──────────────────────────────────────────────
-function StatusCard({
-  agent, clients, latestCallByClient, job, onRun,
-}: {
-  agent:              AgentConfig;
-  clients:            Client[];
-  latestCallByClient: Record<string, string>;
-  job?:               JobState;
-  onRun:              () => void;
-}) {
-  const busy = job?.status === "queued" || job?.status === "running";
-
-  return (
-    <div className="flex flex-col rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
-      <CardHeader agent={agent} icon={<PhoneCall size={16} />} />
-
-      <div className="mt-4 flex-1 space-y-1.5">
-        {clients.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No clients in hq_clients yet.</p>
-        ) : (
-          clients.map((c) => {
-            const last = latestCallByClient[c.id];
-            return (
-              <div key={c.id} className="flex items-center justify-between gap-3 text-sm">
-                <span className="min-w-0 truncate">{c.name}</span>
-                <span className={cn(
-                  "shrink-0 text-xs tabular-nums",
-                  last ? "text-muted-foreground" : "font-medium text-amber-600",
-                )}>
-                  {last ? `last call ${formatWhen(last)}` : "no calls yet"}
-                </span>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      <div className="mt-4 space-y-2">
-        <JobStatus job={job} />
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onRun}
-          className="w-full rounded-lg border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-muted/40 disabled:opacity-50"
-        >
-          {busy
-            ? <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Checking…</span>
-            : (agent.submitLabel ?? "Run check")}
-        </button>
-      </div>
     </div>
   );
 }
@@ -345,13 +275,4 @@ function JobStatus({ job }: { job?: JobState }) {
       )}
     </div>
   );
-}
-
-function formatWhen(iso: string): string {
-  const d = new Date(iso);
-  const mins = Math.round((Date.now() - d.getTime()) / 60_000);
-  if (mins < 1)   return "just now";
-  if (mins < 60)  return `${mins}m ago`;
-  if (mins < 60 * 24) return `${Math.round(mins / 60)}h ago`;
-  return d.toLocaleDateString("en-AU", { day: "numeric", month: "short" });
 }
