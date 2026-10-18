@@ -17,9 +17,38 @@ import {
 type Task = BaseTask & {
   client_id:   string | null;
   client_name: string | null;
+  /** Who made it, and who it's for. Set by the tasks-ownership migration. */
+  created_by?:  string | null;
+  assigned_to?: string | null;
 };
 
-export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
+type Person = { email: string; name: string };
+
+/** A short label saying whose task this is, or null when it's just the viewer's own. */
+function ownerNote(task: Task, viewer: { email: string; isManager: boolean }, nameOf: (email: string) => string): string | null {
+  const to = task.assigned_to?.toLowerCase() ?? null;
+  const by = task.created_by?.toLowerCase() ?? null;
+  if (viewer.isManager) {
+    if (to && to !== viewer.email) return `For ${nameOf(to)}`;
+    if (!to && by && by !== viewer.email) return `From ${nameOf(by)}`;
+    return null;
+  }
+  if (to === viewer.email && by && by !== viewer.email) return `From ${nameOf(by)}`;
+  return null;
+}
+
+export function TasksOverview({
+  initialTasks, viewer, people, ownership,
+}: {
+  initialTasks: Task[];
+  viewer: { email: string; isManager: boolean };
+  /** Who a manager can assign a task to. */
+  people: Person[];
+  /** False until the tasks-ownership migration has been run. */
+  ownership: boolean;
+}) {
+  const nameOf = (email: string) =>
+    people.find((p) => p.email.toLowerCase() === email.toLowerCase())?.name ?? email.split("@")[0].replace(/^./, (c) => c.toUpperCase());
   const [tasks,    setTasks]    = useState<Task[]>(initialTasks);
   const [showDone, setShowDone] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -29,6 +58,7 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
   const [newDate,    setNewDate]    = useState("");
   const [newTime,    setNewTime]    = useState("");
   const [adding,     setAdding]     = useState(false);
+  const [newAssignee, setNewAssignee] = useState("");   // "" = myself
 
   async function addInternalTask() {
     if (!newTitle.trim()) return;
@@ -41,6 +71,8 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
         title:     newTitle.trim(),
         due_date:  newDate || null,
         due_time:  newTime || null,
+        // Only a manager can hand a task to someone else
+        ...(ownership && viewer.isManager && newAssignee ? { assigned_to: newAssignee.toLowerCase() } : {}),
       })
       .select("id, client_id, title, due_date, due_time, completed_at, created_at")
       .single();
@@ -57,13 +89,16 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
           due_time:     data.due_time     as string | null,
           completed_at: data.completed_at as string | null,
           created_at:   data.created_at   as string,
+          created_by:   viewer.email,
+          assigned_to:  ownership && viewer.isManager && newAssignee ? newAssignee.toLowerCase() : null,
         },
         ...prev,
       ]);
       setNewTitle("");
       setNewDate("");
       setNewTime("");
-      toast.success("Internal task added");
+      toast.success(ownership && viewer.isManager && newAssignee ? `Task assigned to ${nameOf(newAssignee)}` : "Task added");
+      setNewAssignee("");
     } else {
       toast.error("Could not add task");
     }
@@ -163,8 +198,8 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
       <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
         <div className="mb-3 flex items-center gap-2">
           <Briefcase size={14} className="text-primary" />
-          <h2 className="text-sm font-semibold">Add Internal Task</h2>
-          <span className="text-xs text-muted-foreground">— for admin work not tied to a client</span>
+          <h2 className="text-sm font-semibold">{viewer.isManager ? "Add Internal Task" : "Add a Task"}</h2>
+          <span className="text-xs text-muted-foreground">{viewer.isManager ? "— for admin work not tied to a client" : "— a reminder for yourself"}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -189,6 +224,19 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
             title={!newDate ? "Set a date first" : "Optional time"}
             className="rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
           />
+          {ownership && viewer.isManager && people.length > 1 && (
+            <select
+              value={newAssignee}
+              onChange={(e) => setNewAssignee(e.target.value)}
+              aria-label="Assign to"
+              className="rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
+            >
+              <option value="">For me</option>
+              {people.filter((p) => p.email.toLowerCase() !== viewer.email).map((p) => (
+                <option key={p.email} value={p.email}>For {p.name}</option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             onClick={addInternalTask}
@@ -251,10 +299,11 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
                     ) : (
                       <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
                         <Briefcase size={9} />
-                        Internal
+                        {viewer.isManager ? "Internal" : "Task"}
                       </span>
                     )
                   }
+                  rightNote={ownerNote(task, viewer, nameOf)}
                 />
               ))}
           </div>
@@ -303,6 +352,9 @@ export function TasksOverview({ initialTasks }: { initialTasks: Task[] }) {
                               <Briefcase size={9} />
                               Internal
                             </span>
+                          )}
+                          {ownerNote(task, viewer, nameOf) && (
+                            <span className="text-[10px] font-semibold text-foreground/70">{ownerNote(task, viewer, nameOf)}</span>
                           )}
                           {task.completed_at && (
                             <span className="text-xs text-muted-foreground">

@@ -60,7 +60,7 @@ export function Sidebar({ visible }: { visible: string[] }) {
   return (
     <aside
       className={cn(
-        "flex h-screen shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200",
+        "flex h-full shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200",
         collapsed ? "w-16" : "w-60",
       )}
     >

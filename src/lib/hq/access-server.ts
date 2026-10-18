@@ -60,6 +60,54 @@ export async function resolveAccess(
   };
 }
 
+export type AccessView = {
+  /** Who is really signed in. Used for who may do what behind the scenes. */
+  real: Access;
+  /** What they get to SEE. Equal to `real`, unless a manager is previewing someone. */
+  effective: Access;
+  /** Set while a manager is previewing as a team member. */
+  previewing: { id: string; name: string | null; email: string } | null;
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Like resolveAccess, plus "preview as": a manager can look at the CRM exactly as a
+ * team member sees it. A preview only ever NARROWS what a manager sees, and it's ignored
+ * for anyone who isn't really a manager, so it can't be used to see more.
+ * An unusable preview (person removed, switched off, or not a plain member) is ignored.
+ */
+export async function resolveAccessView(
+  supabase: SupabaseClient,
+  email: string | null | undefined,
+  previewId?: string | null,
+): Promise<{ ok: true; view: AccessView } | Extract<AccessResult, { ok: false }>> {
+  const r = await resolveAccess(supabase, email);
+  if (!r.ok) return r;
+  const plain = { ok: true as const, view: { real: r.access, effective: r.access, previewing: null } };
+  if (!previewId || r.access.role !== "manager" || !UUID.test(previewId)) return plain;
+
+  const { data } = await supabase
+    .from("team_members")
+    .select("id, email, name, role, sections, status")
+    .eq("id", previewId)
+    .maybeSingle();
+  if (!data || data.role !== "member" || data.status === "deactivated") return plain;
+
+  const effective: Access = {
+    email: data.email as string,
+    name: (data.name as string | null) ?? null,
+    role: "member",
+    sections: parseSections(data.sections),
+    status: "active",
+    source: "team",
+  };
+  return {
+    ok: true,
+    view: { real: r.access, effective, previewing: { id: data.id as string, name: effective.name, email: effective.email } },
+  };
+}
+
 /** Who is signed in right now, and what may they see. */
 export async function getCurrentAccess(supabase: SupabaseClient): Promise<AccessResult> {
   const { data: { user } } = await supabase.auth.getUser();

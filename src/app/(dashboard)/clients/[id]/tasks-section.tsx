@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Circle, Clock, Plus, Loader2, Pencil, X, Save } from "lucide-react";
 import { playSuccessChime, unlockAudio } from "@/lib/sounds";
+import { sydneyDateOf, sydneyTimeOf } from "@/lib/hq/sydney-time";
 
 export type Task = {
   id:           string;
@@ -17,18 +18,17 @@ export type Task = {
 };
 
 // ─── Overdue check considers time when present ──────────────────────────────
+// Due dates and times are Sydney time, so "today" and "now" are judged in Sydney
+// whatever timezone the person looking at them is in.
 export function isOverdue(task: Task): boolean {
   if (task.completed_at || !task.due_date) return false;
-  const today = new Date();
-  const dueDay = new Date(task.due_date + "T00:00:00");
-  // Strip time from today for date-only comparison
-  const todayDay = new Date(today.toDateString());
-  if (dueDay < todayDay) return true;
-  if (dueDay.getTime() !== todayDay.getTime()) return false; // future day
-  // Same day — only overdue if due_time has passed
+  const now = new Date();
+  const today = sydneyDateOf(now);
+  if (task.due_date < today) return true;
+  if (task.due_date > today) return false;   // a future day
+  // Same day: only overdue once the due time has passed
   if (!task.due_time) return false;
-  const [h, m] = task.due_time.split(":").map(Number);
-  return today.getHours() > h || (today.getHours() === h && today.getMinutes() > (m ?? 0));
+  return sydneyTimeOf(now) > task.due_time.slice(0, 5);
 }
 
 // ─── Format helpers ─────────────────────────────────────────────────────────
@@ -287,6 +287,7 @@ export function OpenTaskRow({
   onComplete,
   onSave,
   leftSlot,
+  rightNote,
 }: {
   task:          Task;
   editing:       boolean;
@@ -296,6 +297,8 @@ export function OpenTaskRow({
   onSave:        (updates: Partial<Pick<Task, "title" | "due_date" | "due_time">>) => void;
   // Optional extra slot to render below the title (used by global Tasks page for client link)
   leftSlot?:     React.ReactNode;
+  /** Whose task this is, when it isn't simply the viewer's own ("For Jan", "From Ryan"). */
+  rightNote?:    string | null;
 }) {
   const overdue = isOverdue(task);
 
@@ -367,6 +370,9 @@ export function OpenTaskRow({
             <p className="text-sm">{task.title}</p>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
               {leftSlot}
+              {rightNote && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-foreground/70">{rightNote}</span>
+              )}
               {task.due_date && (
                 <div className="flex items-center gap-1">
                   <Clock

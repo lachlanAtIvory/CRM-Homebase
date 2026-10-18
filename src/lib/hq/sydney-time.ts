@@ -102,3 +102,58 @@ export function quickTimes(now: Date = new Date()): { label: string; value: stri
     { label: "Tomorrow 2:00 pm", value: toLocalString(tomorrow + 14 * 60 * 60000) },
   ];
 }
+
+/* ── Calendar-date helpers (Sydney) ──────────────────────────────────────── */
+
+const dateParts = (d: Date) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ, hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return { y: get("year"), mo: get("month"), d: get("day"), h: get("hour"), mi: get("minute") };
+};
+
+/** The Sydney calendar date of an instant: "2026-10-20". */
+export function sydneyDateOf(iso: string | Date): string {
+  const p = dateParts(typeof iso === "string" ? new Date(iso) : iso);
+  return `${p.y}-${p.mo}-${p.d}`;
+}
+
+/** The Sydney wall-clock time of an instant: "14:30". */
+export function sydneyTimeOf(iso: string | Date): string {
+  const p = dateParts(typeof iso === "string" ? new Date(iso) : iso);
+  return `${p.h}:${p.mi}`;
+}
+
+/** "2026-10-20" plus n days. */
+export function addDaysToDate(date: string, n: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  const out = new Date(Date.UTC(y, m - 1, d + n));
+  return `${out.getUTCFullYear()}-${pad(out.getUTCMonth() + 1)}-${pad(out.getUTCDate())}`;
+}
+
+/** Day of the week for a calendar date: 0 = Sunday ... 6 = Saturday. */
+export function weekdayOfDate(date: string): number {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** Midnight at the start of a Sydney calendar date, as an ISO instant. */
+export function startOfSydneyDate(date: string): string {
+  return sydneyWallToISO(`${date}T00:00`) as string;
+}
+
+const timeFmt = new Intl.DateTimeFormat("en-AU", { timeZone: TZ, hour: "numeric", minute: "2-digit", hour12: true });
+/** "9:30 am" in Sydney time. */
+export function formatSydneyClock(iso: string | Date): string {
+  return timeFmt.format(typeof iso === "string" ? new Date(iso) : iso).replace(/\s?(am|pm)$/i, (_, ap) => ` ${String(ap).toLowerCase()}`);
+}
+
+/** "Wed 14 Oct" for a Sydney calendar date. */
+export function formatDateLabel(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-AU", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short" })
+    .format(new Date(Date.UTC(y, m - 1, d)))
+    .replace(/^(\w+),\s*/, "$1 ");
+}

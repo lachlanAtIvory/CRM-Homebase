@@ -8,7 +8,7 @@ import {
 import type { AuditEntry, TeamMember, TeamOverview } from "@/lib/hq/team-admin";
 import { formatSydney } from "@/lib/hq/sydney-time";
 import {
-  AlertTriangle, Check, ChevronDown, Copy, Loader2, Lock, ShieldCheck, Trash2, UserPlus,
+  AlertTriangle, Check, ChevronDown, Copy, Eye, Loader2, Lock, ShieldCheck, Trash2, UserPlus,
 } from "lucide-react";
 
 const inputCls =
@@ -226,7 +226,7 @@ function MemberRow({ member, startOpen, onTeam, say }: {
 }) {
   const [open, setOpen] = useState(startOpen);
   const [draft, setDraft] = useState<SectionKey[]>(member.sections);
-  const [busy, setBusy] = useState<"save" | "status" | "remove" | null>(null);
+  const [busy, setBusy] = useState<"save" | "status" | "remove" | "preview" | null>(null);
   const [copied, setCopied] = useState(false);
 
   // Keep the editor in step when the saved access changes underneath it.
@@ -271,6 +271,14 @@ function MemberRow({ member, startOpen, onTeam, say }: {
     say(`${display} removed.`);
   }
 
+  async function preview() {
+    if (dirty && !window.confirm("You have unsaved changes. The preview shows what's saved, not these changes. Preview anyway?")) return;
+    setBusy("preview");
+    const r = await call<{ landing: string }>("/api/preview", "POST", { id: member.id });
+    if (!r.ok) { setBusy(null); say(r.error, "error"); return; }
+    window.location.href = r.data.landing;
+  }
+
   async function copyLink() {
     try { await navigator.clipboard.writeText(signInUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); }
     catch { say("Couldn't copy. Select the address and copy it by hand.", "error"); }
@@ -296,9 +304,22 @@ function MemberRow({ member, startOpen, onTeam, say }: {
             )}
           </div>
         </div>
-        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className={btnCls}>
-          {open ? "Close" : "Edit access"} <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
-        </button>
+        <div className="flex items-center gap-2">
+          {!off && (
+            <button
+              type="button"
+              onClick={preview}
+              disabled={busy !== null}
+              title={`See the CRM exactly as ${display} sees it`}
+              className={btnCls}
+            >
+              {busy === "preview" ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />} Preview as {member.name?.trim() || "them"}
+            </button>
+          )}
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className={btnCls}>
+            {open ? "Close" : "Edit access"} <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
+          </button>
+        </div>
       </div>
 
       {open && (

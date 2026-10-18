@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { actorFromEmail, fetchMotivationStats } from "./motivation-stats";
 import { bookSalesCall } from "./book-sales-call";
+import type { BookableResult } from "./availability";
 import {
   fetchTabCounts, formatNoteLine, isMissingTable, SALES_CALL_WITH,
   type CallLead, type CallLeadNote, type Outcome, type SalesCallWith,
@@ -32,6 +33,8 @@ export type OutcomeBody = {
   with?: string;
   contact_name?: string;
   email?: string;
+  /** True when the time was picked from the offered booking buttons. */
+  slot?: boolean;
 };
 
 export type OutcomeResponse = { status: number; json: Record<string, unknown> };
@@ -66,7 +69,16 @@ export async function applyOutcome(
    * lock only lets him touch the call list), so the route passes the server's
    * own client, used only after it has checked he has the Call List section.
    */
-  deps: { writer?: SupabaseClient } = {},
+  deps: {
+    writer?: SupabaseClient;
+    /**
+     * Re-checks, at the moment of booking, that this time is still free for this person (and inside
+     * their hours when `requireWindow`). Not passed in tests that don't care about availability.
+     */
+    checkBookable?: (when: Date, person: SalesCallWith, requireWindow: boolean) => Promise<BookableResult>;
+    /** Someone who isn't a manager can only book the offered times, never a free-typed one. */
+    strictSlots?: boolean;
+  } = {},
 ): Promise<OutcomeResponse> {
   const actor = actorFromEmail(user.email);
 
@@ -92,6 +104,13 @@ export async function applyOutcome(
     if (lead.status === "booked") return fail(409, "A sales call is already booked for this lead.");
     if (!SALES_CALL_WITH.includes(body.with as SalesCallWith)) return fail(400, "Choose who the sales call is with.");
     withWhom = body.with as SalesCallWith;
+
+    // Is the time still free for them? Two people can't take the same slot, and
+    // someone limited to the booking buttons can't book outside the offered hours.
+    if (deps.checkBookable && when) {
+      const check = await deps.checkBookable(when, withWhom, body.slot === true || deps.strictSlots === true);
+      if (!check.ok) return fail(409, check.reason, { slotTaken: true });
+    }
   }
 
   const now = new Date();
@@ -167,22 +186,30 @@ export async function applyOutcome(
     case "do_not_call":
       patch.status = outcome;
       patch.callback_at = null;
+      patch.callback_by = null;
       break;
     case "callback":
       patch.status = "callback";
       patch.callback_at = when!.toISOString();
+      patch.callback_by = (user.email ?? "").toLowerCase() || null;   // reminders go to whoever promised it
       break;
     case "booked":
       patch.status = "booked";
       patch.callback_at = null;
+      patch.callback_by = null;
       patch.client_id = clientId;
       break;
   }
 
   let updated = lead;
   if (Object.keys(patch).length) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("call_leads").update(patch).eq("id", id).select("*").single();
+    // Before the tasks/callback migration is run the callback_by column doesn't exist: save without it.
+    if (error && /callback_by/.test(error.message) && "callback_by" in patch) {
+      const { callback_by: _unused, ...rest } = patch;
+      ({ data, error } = await supabase.from("call_leads").update(rest).eq("id", id).select("*").single());
+    }
     if (error) {
       return fail(500, `Logged, but the lead didn't update: ${error.message}`, { note: noteRow ?? null });
     }

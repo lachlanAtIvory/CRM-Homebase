@@ -18,11 +18,12 @@ const fakeClient = (opts: any) => ({
   },
   from: (t: string) => ({
     select: () => ({
-      eq: (_c: string, email: string) => ({
+      eq: (col: string, value: string) => ({
         maybeSingle: async () => {
           state.dbLookups++;
           if (state.dbError) return { data: null, error: { code: "XX000", message: "connection reset" } };
-          return { data: state.rows[email] ?? null, error: null };
+          const row = col === "id" ? Object.values(state.rows).find((r: any) => r.id === value) : state.rows[value];
+          return { data: row ?? null, error: null };
         },
       }),
     }),
@@ -40,9 +41,9 @@ const { middleware } = require("../../src/middleware");
 let fails = 0, passes = 0;
 const ok = (n: string, c: boolean, d?: unknown) => { if (c) passes++; else { fails++; console.log("FAIL", n, d === undefined ? "" : JSON.stringify(d)); } };
 
-async function hit(path: string, { method = "GET", host = "crm.agentivory.com" }: { method?: string; host?: string } = {}) {
+async function hit(path: string, { method = "GET", host = "crm.agentivory.com", cookie }: { method?: string; host?: string; cookie?: string } = {}) {
   state.signedOut = false;
-  const res = await middleware(new NextRequest(`https://${host}${path}`, { method, headers: { host } }));
+  const res = await middleware(new NextRequest(`https://${host}${path}`, { method, headers: { host, ...(cookie ? { cookie } : {}) } }));
   const loc = res.headers.get("location");
   const passed = res.status === 200 && res.headers.get("x-middleware-next") === "1";
   let json: any = null; try { if (res.headers.get("content-type")?.includes("json")) json = await res.clone().json(); } catch {}
@@ -52,7 +53,7 @@ const asUser = (email: string | null) => { state.user = email; state.dbLookups =
 
 const JAN = "jan@agentivory.com";
 (async () => {
-  state.rows[JAN] = { email: JAN, name: "Jan", role: "member", sections: ["call-list"], status: "invited" };
+  state.rows[JAN] = { id: "11111111-1111-4111-8111-111111111111", email: JAN, name: "Jan", role: "member", sections: ["call-list"], status: "invited" };
   state.rows["old@agentivory.com"] = { email: "old@agentivory.com", name: "Old", role: "member", sections: ["call-list", "clients"], status: "deactivated" };
   state.rows["empty@agentivory.com"] = { email: "empty@agentivory.com", name: "Empty", role: "member", sections: [], status: "active" };
 
@@ -139,5 +140,49 @@ const JAN = "jan@agentivory.com";
   r = await hit("/call-list", { host: "concierge.agentivory.com" }); ok("concierge host still 404s the internal Call List", r.status === 404, r);
   r = await hit("/api/call-leads", { host: "concierge.agentivory.com" }); ok("...and its API", r.status === 404, r);
 
+
+  // ── a manager previewing as Jan is held to Jan's rules
+  const PREVIEW = "ivory_preview_as=11111111-1111-4111-8111-111111111111";
+  asUser("lachlan@agentivory.com");
+  r = await hit("/pipeline", { cookie: PREVIEW });
+  ok("PREVIEW: a founder previewing Jan is sent away from /pipeline just as Jan would be", r.redirect === "/call-list", r);
+  r = await hit("/", { cookie: PREVIEW });
+  ok("PREVIEW: ...and from Home, to Jan's Call List", r.redirect === "/call-list", r);
+  r = await hit("/settings/team", { cookie: PREVIEW });
+  ok("PREVIEW: the Team screen is closed while previewing (exit first)", r.redirect === "/call-list", r);
+  r = await hit("/call-list", { cookie: PREVIEW });
+  ok("PREVIEW: Jan's own screen opens", r.passed, r);
+  r = await hit("/api/invoices", { method: "POST", cookie: PREVIEW });
+  ok("PREVIEW: APIs Jan can't use answer 403 too", r.status === 403, r);
+  r = await hit("/api/preview", { method: "DELETE", cookie: PREVIEW });
+  ok("PREVIEW: the exit button's request is allowed", r.passed, r);
+  r = await hit("/api/preview", { method: "POST", cookie: PREVIEW });
+  ok("PREVIEW: switching preview to someone else is allowed", r.passed, r);
+  r = await hit("/pipeline");
+  ok("after exiting (no cookie) the founder has everything again", r.passed, r);
+  state.rows[JAN].sections = ["call-list", "tasks", "calendar"];
+  r = await hit("/tasks", { cookie: PREVIEW });
+  ok("PREVIEW follows Jan's current toggles: Tasks now opens", r.passed, r);
+  r = await hit("/clients", { cookie: PREVIEW });
+  ok("...but Clients still doesn't", r.redirect === "/call-list", r);
+  state.rows[JAN].sections = ["call-list"];
+  r = await hit("/pipeline", { cookie: "ivory_preview_as=55555555-5555-4555-8555-555555555555" });
+  ok("a preview of someone who doesn't exist is dropped: founder carries on, and the stale cookie is cleared", r.passed && r.cookies.some((c: any) => c.name === "ivory_preview_as" && (c.value === "" || c.maxAge === 0 || c.expires)), r);
+  r = await hit("/pipeline", { cookie: "ivory_preview_as=not-a-uuid" });
+  ok("a junk preview cookie is ignored", r.passed, r);
+  state.rows[JAN].status = "deactivated";
+  r = await hit("/pipeline", { cookie: PREVIEW });
+  ok("previewing someone switched off is ignored", r.passed, r);
+  state.rows[JAN].status = "active";
+
+  // ── a team member can NOT use a preview cookie to see more
+  asUser(JAN);
+  state.rows["sam@agentivory.com"] = { id: "44444444-4444-4444-8444-444444444444", email: "sam@agentivory.com", name: "Sam", role: "member", sections: ["pipeline", "clients", "finance"], status: "active" };
+  r = await hit("/pipeline", { cookie: "ivory_preview_as=44444444-4444-4444-8444-444444444444" });
+  ok("JAN sending a cookie to preview SAM still can't open Pipeline", r.redirect === "/call-list", r);
+  r = await hit("/api/invoices", { method: "POST", cookie: "ivory_preview_as=44444444-4444-4444-8444-444444444444" });
+  ok("...or the invoices API", r.status === 403, r);
   console.log(`\n${passes} passed, ${fails} failed`);
 })();
+
+export {};

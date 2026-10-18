@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { playReminderDing } from "@/lib/sounds";
+import { sydneyWallToISO } from "@/lib/hq/sydney-time";
 
 const REMINDER_OFFSET_MS = 10 * 60 * 1000; // 10 minutes before due_time
 const POLL_INTERVAL_MS   =  5 * 60 * 1000; // re-fetch task list every 5 min
@@ -63,8 +64,10 @@ export function TaskReminderManager() {
         const due_time = task.due_time as string | null;
         if (!due_date || !due_time) continue;
 
-        // Local-time parse (no timezone suffix → JS treats as local)
-        const dueMs  = new Date(`${due_date}T${due_time.slice(0, 5)}:00`).getTime();
+        // Due times are Sydney time. Reading them as the browser's own time would fire
+        // the reminder at the wrong hour for anyone working from another timezone.
+        const dueIso = sydneyWallToISO(`${due_date}T${due_time.slice(0, 5)}`);
+        const dueMs  = dueIso ? new Date(dueIso).getTime() : NaN;
         if (Number.isNaN(dueMs)) continue;
 
         const fireMs = dueMs - REMINDER_OFFSET_MS;

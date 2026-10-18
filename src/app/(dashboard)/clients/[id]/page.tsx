@@ -7,7 +7,7 @@ import { TasksSection } from "./tasks-section";
 import { InvoicesSection, type InvoiceRow } from "./invoices-section";
 import { isSetupError } from "@/lib/hq/supabase-admin";
 import { can } from "@/lib/hq/access";
-import { getCurrentAccess } from "@/lib/hq/access-server";
+import { getEffectiveAccess } from "@/lib/hq/access-guard";
 import { DeleteApplicationButton, DeleteClientButton } from "./delete-buttons";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -32,8 +32,8 @@ export default async function ClientDetailPage({
   const supabase = await createClient();
 
   // Invoices are money: only people with "Revenue and invoices" see or load them.
-  const access = await getCurrentAccess(supabase);
-  const showInvoices = access.ok && can(access.access, "finance");
+  const access = await getEffectiveAccess();
+  const showInvoices = !!access && can(access, "finance");
 
   // Separate queries — avoids any embedded-join schema-cache issues
   const [

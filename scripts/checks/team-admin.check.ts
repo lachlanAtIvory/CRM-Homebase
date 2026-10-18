@@ -100,7 +100,7 @@ const audits = (db: any) => db.tables.team_audit ?? [];
   // ── adding Jan BEFORE he has signed in
   db = makeDb();
   let a: any = await addMember(db, L, { email: " Jan@Agentivory.com ", name: " Jan ", preset: "caller" });
-  ok("add: ok, email lower-cased, name trimmed, invited, caller preset", a.ok && a.member.email === "jan@agentivory.com" && a.member.name === "Jan" && a.member.status === "invited" && JSON.stringify(a.member.sections) === '["call-list"]', a);
+  ok("add: ok, email lower-cased, name trimmed, invited, caller preset (Call List + Tasks + Calendar)", a.ok && a.member.email === "jan@agentivory.com" && a.member.name === "Jan" && a.member.status === "invited" && JSON.stringify(a.member.sections) === '["call-list","tasks","calendar"]', a);
   ok("add: row stored with who invited", db.tables.team_members[0].invited_by === L && db.tables.team_members[0].role === "member");
   ok("add: audited", audits(db).length === 1 && audits(db)[0].action === "added member" && audits(db)[0].target_email === "jan@agentivory.com" && audits(db)[0].actor === L);
   a = await addMember(db, L, { email: "jan@agentivory.com" });
@@ -117,7 +117,9 @@ const audits = (db: any) => db.tables.team_audit ?? [];
   a = await addMember(db, L, { email: "none@agentivory.com", preset: "none" });
   ok("add: 'Nothing yet' preset gives zero access", a.ok && a.member.sections.length === 0);
   a = await addMember(db, L, { email: "unknownpreset@agentivory.com", preset: "whatever" });
-  ok("add: an unknown preset falls back to the safe cold-caller default (never more access)", a.ok && JSON.stringify(a.member.sections) === '["call-list"]', a);
+  ok("add: an unknown preset falls back to the cold-caller default", a.ok && JSON.stringify(a.member.sections) === '["call-list","tasks","calendar"]', a);
+  a = await addMember(db, L, { email: "lite@agentivory.com", preset: "call-list-only" });
+  ok("add: the 'Call List only' preset", a.ok && JSON.stringify(a.member.sections) === '["call-list"]', a);
   a = await addMember(makeDb({}, { missing: ["team_members"] }), L, { email: "x@agentivory.com" });
   ok("add: before the migration -> 503 with a plain message", !a.ok && a.status === 503, a);
   a = await addMember(db, L, { email: "long@agentivory.com", name: "x".repeat(500) });
@@ -128,7 +130,7 @@ const audits = (db: any) => db.tables.team_audit ?? [];
   let u: any = await updateMember(db, L, jan.id, { sections: ["call-list", "motivation", "nonsense"] });
   ok("update: sections saved, sanitised", u.ok && JSON.stringify(u.member.sections) === '["call-list","motivation"]', u);
   const au = audits(db).at(-1);
-  ok("update: audit says what was turned on", au.action === "changed access" && JSON.stringify(au.detail.added) === '["motivation"]' && JSON.stringify(au.detail.removed) === "[]", au);
+  ok("update: audit says what was turned on and off (Tasks and Calendar were in the starting set)", au.action === "changed access" && JSON.stringify(au.detail.added) === '["motivation"]' && JSON.stringify(au.detail.removed) === '["tasks","calendar"]', au);
   u = await updateMember(db, L, jan.id, { sections: ["motivation"] });
   ok("update: audit says what was turned off", JSON.stringify(audits(db).at(-1).detail) === '{"added":[],"removed":["call-list"]}', audits(db).at(-1));
   u = await updateMember(db, L, jan.id, { sections: [] });
@@ -204,5 +206,31 @@ const audits = (db: any) => db.tables.team_audit ?? [];
   await recordLogin(db, "nobody@x.com");
   ok("an unknown email creates nothing", db.tables.team_members.length === 2);
 
+
+  // ── preview as a team member
+  const { resolveAccessView } = require("../../src/lib/hq/access-server");
+  const JANID = "11111111-1111-4111-8111-111111111111", MGRID = "22222222-2222-4222-8222-222222222222", OFFID = "33333333-3333-4333-8333-333333333333";
+  db = makeDb({ team_members: [
+    { id: JANID, email: "jan@agentivory.com", name: "Jan", role: "member", sections: ["call-list", "tasks", "calendar"], status: "invited" },
+    { id: MGRID, email: "boss@agentivory.com", name: "Boss", role: "manager", sections: [], status: "active" },
+    { id: OFFID, email: "old@agentivory.com", name: "Old", role: "member", sections: ["call-list"], status: "deactivated" },
+  ] });
+  let v: any = await resolveAccessView(db, "lachlan@agentivory.com", JANID);
+  ok("PREVIEW: a founder previewing Jan sees exactly Jan's access", v.ok && v.view.effective.role === "member" && JSON.stringify(v.view.effective.sections) === '["call-list","tasks","calendar"]' && v.view.effective.email === "jan@agentivory.com" && v.view.previewing.name === "Jan", v);
+  ok("...while the REAL person stays the founder (so behind-the-scenes checks still use them)", v.view.real.role === "manager" && v.view.real.email === "lachlan@agentivory.com");
+  v = await resolveAccessView(db, "lachlan@agentivory.com", undefined);
+  ok("no preview: effective = real", v.ok && v.view.previewing === null && v.view.effective.role === "manager");
+  v = await resolveAccessView(db, "jan@agentivory.com", JANID);
+  ok("a team MEMBER sending a preview cookie gets nothing extra (ignored)", v.ok && v.view.previewing === null && v.view.effective.email === "jan@agentivory.com", v);
+  const SAMID = "44444444-4444-4444-8444-444444444444";
+  db.tables.team_members.push({ id: SAMID, email: "sam@agentivory.com", name: "Sam", role: "member", sections: ["tasks"], status: "active" });
+  v = await resolveAccessView(db, "jan@agentivory.com", SAMID);
+  ok("...including trying to preview someone ELSE with more access", v.view.previewing === null && JSON.stringify(v.view.effective.sections) === '["call-list","tasks","calendar"]');
+  for (const [name, id] of [["a manager", MGRID], ["a switched-off member", OFFID], ["a person who doesn't exist", "55555555-5555-4555-8555-555555555555"], ["junk", "not-a-uuid"], ["an injection attempt", "' or 1=1 --"]] as const) {
+    v = await resolveAccessView(db, "lachlan@agentivory.com", id);
+    ok(`PREVIEW of ${name} is ignored (founder just sees their own view)`, v.ok && v.view.previewing === null && v.view.effective.role === "manager", v);
+  }
+  v = await resolveAccessView(db, "stranger@gmail.com", JANID);
+  ok("a stranger with a preview cookie is still refused", !v.ok && v.reason === "none", v);
   console.log(`\n${passes} passed, ${fails} failed`);
 })();
