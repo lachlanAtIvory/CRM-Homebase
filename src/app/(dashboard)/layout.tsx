@@ -48,8 +48,9 @@ export default async function DashboardLayout({
           Tasks are shared, so only people with the Tasks section get them. */}
       {can(access, "tasks") && <TaskReminderManager />}
 
-      {/* Floating "Ask the Guru" sales-trainer chat, bottom-right on every page */}
-      <GuruWidget />
+      {/* Floating "Ask the Guru" sales-trainer chat, bottom-right on every page.
+          It's built on the full Sales Bible (pricing, strategy), so managers only. */}
+      {can(access, "manager") && <GuruWidget />}
     </div>
   );
 }
