@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { can, landingPath, routeNeed } from "@/lib/hq/access";
-import { resolveAccess } from "@/lib/hq/access-server";
+import { can, landingPath, PREVIEW_COOKIE, routeNeed } from "@/lib/hq/access";
+import { resolveAccessView } from "@/lib/hq/access-server";
 
 // Public paths — accessible without auth. Includes analytics endpoints
 // because the tracking script + beacon are called from public websites,
@@ -123,7 +123,8 @@ export async function middleware(request: NextRequest) {
   // takes effect immediately. Ryan and Lachlan (ALLOWED_EMAILS) skip the
   // database lookup entirely.
   if (user && !isPublic) {
-    const result = await resolveAccess(supabase, user.email);
+    const previewId = request.cookies.get(PREVIEW_COOKIE)?.value;
+    const result = await resolveAccessView(supabase, user.email, previewId);
 
     if (!result.ok) {
       if (result.reason === "error") {
@@ -140,13 +141,17 @@ export async function middleware(request: NextRequest) {
       return redirect;
     }
 
-    if (!can(result.access, routeNeed(path, request.method))) {
+    // A manager previewing as someone is held to that person's rules, so they get bounced exactly as that person would.
+    const seen = result.view.effective;
+    if (previewId && !result.view.previewing) response.cookies.delete(PREVIEW_COOKIE);   // preview target is gone: drop it
+
+    if (!can(seen, routeNeed(path, request.method))) {
       if (path.startsWith("/api/")) {
         return NextResponse.json({ error: "You don't have access to this." }, { status: 403 });
       }
       // A page (or a form on one): send them to the first screen they do have.
       const url = request.nextUrl.clone();
-      url.pathname = landingPath(result.access);
+      url.pathname = landingPath(seen);
       url.search = "";
       return NextResponse.redirect(url);
     }

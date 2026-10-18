@@ -84,12 +84,15 @@ export async function POST(req: NextRequest) {
     hour: "2-digit", minute: "2-digit", hour12: false,
   }).formatToParts(when);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  await writer.from("tasks").insert({
+  const task = {
     client_id: null,
     title:     `${title}${note ? ` — ${note}` : ""}`,
     due_date:  `${get("year")}-${get("month")}-${get("day")}`,
     due_time:  `${get("hour")}:${get("minute")}`,
-  });
+  };
+  // Stamp who it's for; before the tasks-ownership migration is run that column doesn't exist, so retry without it.
+  const { error: taskError } = await writer.from("tasks").insert({ ...task, created_by: (user.email ?? "").toLowerCase() || null });
+  if (taskError && /created_by/.test(taskError.message)) await writer.from("tasks").insert(task);
 
   // 3. The dial log
   await writer.from("prospect_events").insert({

@@ -48,9 +48,9 @@ export const SECTIONS: SectionDef[] = [
     description: "The full playbook, including pricing, strategy and the objection bank.", sensitive: true },
 
   { key: "tasks", group: "Running the business", label: "Tasks",
-    description: "Everyone's tasks and reminders (they're shared, not per person)." },
+    description: "Tasks and reminders. Managers see every task; everyone else sees only tasks they created or that were assigned to them." },
   { key: "calendar", group: "Running the business", label: "Calendar",
-    description: "The shared calendar, including client calls." },
+    description: "The shared calendar: every booking on it, including client calls." },
   { key: "home", group: "Running the business", label: "Home dashboard",
     description: "Pipeline funnel, upcoming meetings and tasks. Revenue only shows with Revenue and invoices." },
 
@@ -85,10 +85,12 @@ export function parseSections(input: unknown): SectionKey[] {
 export type Preset = { key: string; label: string; blurb: string; sections: SectionKey[] };
 
 export const PRESETS: Preset[] = [
-  { key: "caller", label: "Cold caller", sections: ["call-list"],
-    blurb: "Just the Call List. No clients, prices, invoices or calendar." },
-  { key: "caller-plus", label: "Cold caller + scoreboard", sections: ["call-list", "motivation"],
-    blurb: "The Call List and the Motivation scoreboard." },
+  { key: "caller", label: "Cold caller", sections: ["call-list", "tasks", "calendar"],
+    blurb: "The Call List, their own tasks, and the shared calendar. No clients, prices or invoices." },
+  { key: "caller-plus", label: "Cold caller + scoreboard", sections: ["call-list", "tasks", "calendar", "motivation"],
+    blurb: "Everything above, plus the Motivation scoreboard." },
+  { key: "call-list-only", label: "Call List only", sections: ["call-list"],
+    blurb: "Just the Call List. Nothing else in their menu." },
   { key: "none", label: "Nothing yet", sections: [],
     blurb: "Added to the team but can't see anything until you switch sections on." },
 ];
@@ -130,7 +132,10 @@ type Rule = { path: string; exact?: boolean; methods?: string[]; need: Need };
 const RULES: Rule[] = [
   // Managers only: specific things inside otherwise-open sections, and admin tools
   { path: "/settings/team", need: "manager" },
+  { path: "/settings/availability", need: "manager" },
   { path: "/api/team", need: "manager" },
+  { path: "/api/availability/slots", need: "call-list" },
+  { path: "/api/availability", need: "manager" },
   { path: "/call-list/import", need: "manager" },
   { path: "/api/call-leads/import", need: "manager" },
   { path: "/api/call-leads/purge", need: "manager" },
@@ -142,6 +147,7 @@ const RULES: Rule[] = [
   // Sections
   { path: "/", exact: true, need: "home" },
   { path: "/no-access", need: "signed-in" },
+  { path: "/api/preview", need: "signed-in" },
   { path: "/call-list", need: "call-list" },
   { path: "/api/call-leads", need: "call-list" },
   { path: "/motivation", need: "motivation" },
@@ -203,6 +209,9 @@ export function landingPath(access: Access): string {
   const first = LANDING_ORDER.find((href) => can(access, NAV_NEED[href] ?? "manager"));
   return first ?? "/no-access";
 }
+
+/** Cookie that holds who a manager is previewing as. Ignored unless the signed-in person is really a manager. */
+export const PREVIEW_COOKIE = "ivory_preview_as";
 
 /* ── Small helpers ───────────────────────────────────────────────────────── */
 

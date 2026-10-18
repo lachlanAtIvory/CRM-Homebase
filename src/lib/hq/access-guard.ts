@@ -1,6 +1,7 @@
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { can, type Access, type Need } from "./access";
-import { getCurrentAccess } from "./access-server";
+import { can, PREVIEW_COOKIE, type Access, type Need } from "./access";
+import { getCurrentAccess, resolveAccessView, type AccessView } from "./access-server";
 
 /**
  * Checks for route handlers and server actions. The middleware already
@@ -26,4 +27,22 @@ export async function assertAccess(need: Need): Promise<Access> {
   const check = await requireAccessApi(need);
   if (!check.ok) throw new Error(check.error);
   return check.access;
+}
+
+/**
+ * For pages and layouts: who is signed in and what they should SEE, honouring a
+ * manager's "preview as". Route handlers and server actions keep using the checks
+ * above, which always use the real person.
+ */
+export async function getAccessView(): Promise<AccessView | null> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const preview = (await cookies()).get(PREVIEW_COOKIE)?.value;
+  const result = await resolveAccessView(supabase, user?.email, preview);
+  return result.ok ? result.view : null;
+}
+
+/** What the signed-in person should see (a manager previewing as someone gets that person's view). */
+export async function getEffectiveAccess(): Promise<Access | null> {
+  return (await getAccessView())?.effective ?? null;
 }

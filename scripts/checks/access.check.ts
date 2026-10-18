@@ -72,10 +72,22 @@ eq("Manager's sidebar is everything", Object.keys(NAV_NEED).filter((h) => can(ma
 eq("every sidebar link has a rule that agrees with it", Object.entries(NAV_NEED).every(([h, n]) => routeNeed(h) === n), true);
 
 // ── Presets and parsing
-eq("Cold caller preset is just the Call List", PRESETS.find((p) => p.key === "caller")!.sections, ["call-list"]);
+eq("Cold caller preset is the Call List, Tasks and Calendar", PRESETS.find((p) => p.key === "caller")!.sections, ["call-list", "tasks", "calendar"]);
+eq("there is still a Call List only preset", PRESETS.find((p) => p.key === "call-list-only")!.sections, ["call-list"]);
 eq("every preset only uses real sections", PRESETS.every((p) => p.sections.every((s) => SECTION_KEYS.includes(s))), true);
 eq("parseSections drops junk and duplicates, keeps canonical order", parseSections(["finance", "nope", "call-list", "call-list", 7, null]), ["call-list", "finance"]);
 eq("parseSections of garbage", [parseSections(null), parseSections("call-list"), parseSections({})], [[], [], []]);
 eq("normalizeEmail", normalizeEmail("  Jan@Agentivory.COM "), "jan@agentivory.com");
 eq("emails", [isValidEmail("jan@agentivory.com"), isValidEmail("jan@"), isValidEmail("jan agentivory.com"), isValidEmail("a@b.c"), isValidEmail("a@b.co")], [true, false, false, false, true]);
+// ── Jan as set up for real: Call List + Tasks + Calendar
+const janFull = member(["call-list", "tasks", "calendar"]);
+for (const p of ["/call-list", "/tasks", "/calendar", "/api/call-leads", "/api/availability/slots", "/api/call-leads/reminders", "/api/preview"]) eq(`janFull may reach ${p}`, allows(janFull, p, p === "/api/preview" ? "DELETE" : "GET"), true);
+for (const p of ["/", "/clients", "/pipeline", "/quote", "/sales-bible", "/settings", "/settings/team", "/settings/availability", "/api/team", "/api/availability", "/api/invoices", "/applications", "/motivation"]) eq(`janFull still blocked from ${p}`, allows(janFull, p), false);
+eq("janFull's sidebar is Call List, Tasks, Calendar", Object.keys(NAV_NEED).filter((h) => can(janFull, NAV_NEED[h])), ["/call-list", "/tasks", "/calendar"]);
+eq("janFull lands on the Call List", landingPath(janFull), "/call-list");
+eq("availability SETTINGS are managers-only, even with the 'settings' section", [allows(member(["settings"]), "/settings/availability"), allows(member(["settings"]), "/api/availability"), allows(member(["settings"]), "/settings")], [false, false, true]);
+eq("the slot list is open to the Call List but editing hours is not", [allows(jan, "/api/availability/slots"), allows(jan, "/api/availability", "PUT"), allows(jan, "/api/availability/blocks", "POST")], [true, false, false]);
+eq("a member WITHOUT the Call List can't use the slot list", allows(member(["tasks"]), "/api/availability/slots"), false);
+eq("preview endpoint is for anyone signed in (the handler checks for a real manager)", [allows(jan, "/api/preview", "POST"), allows(off, "/api/preview", "POST")], [true, false]);
+eq("the reminder poll is a Call List route", [allows(jan, "/api/call-leads/reminders"), allows(member(["tasks"]), "/api/call-leads/reminders")], [true, false]);
 console.log(`\n${passes} passed, ${fails} failed`);

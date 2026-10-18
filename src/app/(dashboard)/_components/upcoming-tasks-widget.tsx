@@ -3,6 +3,7 @@ import { Clock, ListTodo, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
+import { sydneyDateOf, sydneyTimeOf } from "@/lib/hq/sydney-time";
 
 // Pin Sydney TZ everywhere so server-rendered dates can't drift by a day
 const AU_TZ = "Australia/Sydney";
@@ -25,10 +26,9 @@ function isOverdue(due: string | null, dueTime: string | null, todayIso: string,
   if (!due) return false;
   if (due < todayIso) return true;
   if (due > todayIso) return false;
-  // Same day — overdue only if due_time has passed
+  // Same day: overdue only once the due time has passed (Sydney time)
   if (!dueTime) return false;
-  const [h, m] = dueTime.split(":").map(Number);
-  return now.getHours() > h || (now.getHours() === h && now.getMinutes() > (m ?? 0));
+  return sydneyTimeOf(now) > dueTime.slice(0, 5);
 }
 
 export async function UpcomingTasksWidget({ className }: { className?: string }) {
@@ -49,7 +49,7 @@ export async function UpcomingTasksWidget({ className }: { className?: string })
 
   const clientNameById = new Map((clients ?? []).map((c) => [c.id, c.company_name]));
   const now = new Date();
-  const todayIso = now.toISOString().split("T")[0];
+  const todayIso = sydneyDateOf(now);
 
   const overdueCount = (tasks ?? []).filter((t) => isOverdue(t.due_date, t.due_time, todayIso, now)).length;
 

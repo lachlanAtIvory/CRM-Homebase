@@ -200,5 +200,77 @@ try {
   // ...and running the lock twice in a row is harmless
   await db.exec(sql("migrations/20261018130000_lock_database_to_team_access.sql"));
   ok("running the lock twice is harmless", (await count(L, "client_invoices")) === 1 && (await count(JAN, "client_invoices")) === 0);
+
+  // ═══════════════════════════════════════════════════════════════
+  // Round 2: availability tables + task ownership / client privacy
+  // ═══════════════════════════════════════════════════════════════
+  await db.exec(sql("migrations/20261019120000_add_call_availability.sql"));
+  await db.exec(sql("migrations/20261019130000_tasks_ownership_and_client_privacy.sql"));
+  ok("round 2 migrations apply on top of the lock", true);
+  await db.exec(sql("migrations/20261019130000_tasks_ownership_and_client_privacy.sql"));
+  ok("the tasks migration is safe to run twice", true);
+
+  // Jan now has Tasks and Calendar as well as the Call List
+  await db.exec(`update public.team_members set sections = '{call-list,tasks,calendar}' where email = '${JAN}'`);
+  await db.exec(`delete from public.tasks`);
+  await db.exec(`
+    insert into public.tasks (title, created_by, assigned_to) values
+      ('Manager task (mine)', '${L}', null),
+      ('Old task from before owners existed', null, null),
+      ('Chase Neutral Bay about the logo', '${L}', '${JAN}'),
+      ('Sam''s own task', '${SAM}', null);`);
+  const titles = async (who) => (await as(db, who, `select title from public.tasks order by title`)).rows.map((r) => r.title);
+
+  const janTasks = await titles(JAN);
+  ok("JAN (call-list + tasks + calendar) sees ONLY the task assigned to him", JSON.stringify(janTasks) === JSON.stringify(["Chase Neutral Bay about the logo"]), janTasks);
+  ok("JAN still cannot read a single client, even with Tasks on", (await count(JAN, "clients")) === 0 && (await count(JAN, "deals")) === 0 && (await count(JAN, "client_invoices")) === 0);
+  ok("JAN can see the calendar (he was given it)", (await count(JAN, "meetings")) >= 1);
+  ok("JAN still can't see the call list's neighbours: hq_clients, applications", (await count(JAN, "hq_clients")) === 0 && (await count(JAN, "applications")) === 0);
+
+  const made = await tryWrite(JAN, `insert into public.tasks (title) values ('Ring the accountant back')`);
+  ok("JAN can create his own task", made === 1, made);
+  const mine = (await as(db, "service", `select created_by, assigned_to from public.tasks where title = 'Ring the accountant back'`)).rows[0];
+  ok("...and it's stamped with his email automatically", mine?.created_by === JAN, mine);
+  ok("JAN now sees his two tasks", (await titles(JAN)).length === 2);
+  const forged = await tryWrite(JAN, `insert into public.tasks (title, created_by) values ('Forged as Lachlan', '${L}')`);
+  ok("JAN cannot create a task pretending to be Lachlan", typeof forged === "string" && /row-level security/.test(forged), forged);
+  ok("JAN cannot edit or delete a manager's task (0 rows)", (await tryWrite(JAN, `update public.tasks set title = 'hacked' where title = 'Manager task (mine)'`)) === 0 && (await tryWrite(JAN, `delete from public.tasks where title = 'Manager task (mine)'`)) === 0);
+  ok("JAN can complete the task assigned to him", (await tryWrite(JAN, `update public.tasks set completed_at = now() where title = 'Chase Neutral Bay about the logo'`)) === 1);
+  ok("JAN cannot hand HIS task to himself from someone else's (re-assign trick): can't touch Sam's", (await tryWrite(JAN, `update public.tasks set assigned_to = '${JAN}' where title = 'Sam''s own task'`)) === 0);
+
+  const lachlanTasks = await titles(L);
+  ok("MANAGER sees every task, including old ownerless ones", lachlanTasks.length === 5 && lachlanTasks.includes("Old task from before owners existed"), lachlanTasks);
+  ok("MANAGER can assign a task to Jan", (await tryWrite(L, `update public.tasks set assigned_to = '${JAN}' where title = 'Manager task (mine)'`)) === 1 && (await titles(JAN)).includes("Manager task (mine)"));
+  const samTasks = await titles(SAM);
+  ok("SAM (tasks + clients) sees only his own task, not the managers'", JSON.stringify(samTasks) === JSON.stringify(["Sam's own task"]), samTasks);
+  ok("SAM can still read clients because he has the Clients section", (await count(SAM, "clients")) >= 1);
+  ok("a STRANGER and a switched-off member see no tasks", (await titles(STR)).length === 0 && (await titles(OLD)).length === 0);
+
+  // Callback owner column
+  ok("JAN can record who a callback is for", (await tryWrite(JAN, `update public.call_leads set callback_by = '${JAN}'`)) === 1);
+
+  // Availability
+  ok("the starting hours were seeded (11 windows)", (await count("service", "availability_windows")) === 11);
+  ok("JAN can read the hours (the slot picker needs them)", (await count(JAN, "availability_windows")) === 11 && (await count(JAN, "availability_blocks")) === 0);
+  const ryanHours = (await as(db, JAN, `select weekday from public.availability_windows where person = 'ryan' order by weekday`)).rows.map((r) => r.weekday);
+  ok("Ryan's seeded days are Mon-Fri + weekend", JSON.stringify(ryanHours) === JSON.stringify([0, 1, 2, 3, 4, 5, 6]), ryanHours);
+  const lachHours = (await as(db, JAN, `select weekday from public.availability_windows where person = 'lachlan' order by weekday`)).rows.map((r) => r.weekday);
+  ok("Lachlan's seeded days are Wed, Fri, Sat, Sun", JSON.stringify(lachHours) === JSON.stringify([0, 3, 5, 6]), lachHours);
+  ok("JAN cannot change the hours (0 rows touched)", (await tryWrite(JAN, `update public.availability_windows set end_time = '23:00'`)) === 0);
+  const janIns = await tryWrite(JAN, `insert into public.availability_windows (person, weekday, start_time, end_time) values ('ryan', 0, '00:00', '23:00') on conflict do nothing`);
+  ok("JAN cannot add hours", janIns === 0 || (typeof janIns === "string" && /row-level security/.test(janIns)), janIns);
+  const janBlock = await tryWrite(JAN, `insert into public.availability_blocks (person, starts_at, ends_at) values ('ryan', now(), now() + interval '1 day')`);
+  ok("JAN cannot block out Ryan's time", typeof janBlock === "string" && /row-level security/.test(janBlock), janBlock);
+  ok("MANAGER can change hours", (await tryWrite(L, `update public.availability_windows set end_time = '17:00' where person = 'lachlan' and weekday = 3`)) === 1);
+  ok("MANAGER can add time off", (await tryWrite(L, `insert into public.availability_blocks (person, starts_at, ends_at, reason) values ('ryan', now(), now() + interval '2 days', 'Holiday')`)) === 1);
+  ok("JAN can see that time off (so slots hide it)", (await count(JAN, "availability_blocks")) === 1);
+  ok("a STRANGER reads no hours", (await count(STR, "availability_windows")) === 0);
+  ok("a member with only Tasks (no call list/calendar/settings) can't read the hours", (await (async () => { await db.exec(`update public.team_members set sections = '{tasks}' where email = '${SAM}'`); return count(SAM, "availability_windows"); })()) === 0);
+
+  // Undo script for round 2, then re-apply
+  await db.exec(sql("rollbacks/20261019130000_undo_tasks_ownership.sql"));
+  ok("UNDO: Jan with Tasks can read clients again (the old behaviour)", (await count(JAN, "clients")) >= 1);
+  await db.exec(sql("migrations/20261019130000_tasks_ownership_and_client_privacy.sql"));
+  ok("...and re-applying the migration restores the privacy", (await count(JAN, "clients")) === 0 && (await titles(JAN)).length >= 1);
 } catch (e) { fails++; console.log("ERROR:", String(e.message).slice(0, 400)); }
 console.log(`\n${passes} passed, ${fails} failed`);

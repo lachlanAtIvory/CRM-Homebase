@@ -86,3 +86,59 @@ export async function createCalendarEvent(
     return null;
   }
 }
+
+export type CalendarEventSummary = {
+  id: string;
+  title: string;
+  /** ISO instant, or a plain date ("2026-10-20") for an all-day event. */
+  start: string;
+  end: string;
+  allDay: boolean;
+};
+
+/**
+ * Lists what is already on the shared Ivory Google Calendar between two
+ * instants, so the booking buttons never offer a time that's taken.
+ * Returns null (never throws) if credentials are missing or Google can't be
+ * reached; callers then fall back to the CRM's own meetings table.
+ * Events marked "free" (transparent) and cancelled ones are skipped.
+ */
+export async function listCalendarEvents(
+  timeMinISO: string,
+  timeMaxISO: string,
+): Promise<CalendarEventSummary[] | null> {
+  const calendarId = process.env.GOOGLE_CALENDAR_ID;
+  const auth = getAuth();
+  if (!auth || !calendarId) return null;
+
+  try {
+    const calendar = google.calendar({ version: "v3", auth });
+    const out: CalendarEventSummary[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const res = await calendar.events.list({
+        calendarId,
+        timeMin: timeMinISO,
+        timeMax: timeMaxISO,
+        singleEvents: true,
+        orderBy: "startTime",
+        maxResults: 250,
+        pageToken,
+      });
+      for (const e of res.data.items ?? []) {
+        if (e.status === "cancelled" || e.transparency === "transparent") continue;
+        const allDay = !e.start?.dateTime;
+        const start = e.start?.dateTime ?? e.start?.date;
+        const end = e.end?.dateTime ?? e.end?.date;
+        if (!e.id || !start || !end) continue;
+        out.push({ id: e.id, title: e.summary ?? "", start, end, allDay });
+      }
+      pageToken = res.data.nextPageToken ?? undefined;
+      if (!pageToken) break;
+    }
+    return out;
+  } catch (e) {
+    console.error("Google Calendar event listing failed:", e);
+    return null;
+  }
+}

@@ -9,13 +9,16 @@ import {
 } from "@/lib/hq/call-leads";
 import { parsePhone } from "@/lib/hq/phone";
 import { WEBSITE_FROM_KEY } from "@/lib/hq/website-guess";
+import { clinicClockForSlot, clinicTime } from "@/lib/hq/clinic-time";
+import { PERSON_LABEL } from "@/lib/hq/availability";
+import { SlotPicker, type Picked } from "./slot-picker";
 import {
   formatSydney, formatViewerLocal, quickTimes, sydneyWallToISO, viewerIsOnSydneyTime,
 } from "@/lib/hq/sydney-time";
 import type { MotivationStats } from "@/lib/hq/motivation-stats";
 import { actorDisplayName, type Actor } from "@/lib/hq/motivation-stats";
 import {
-  Ban, CalendarCheck, CalendarClock, Check, Copy, ExternalLink, Globe, Loader2, Mail,
+  Bell, Ban, CalendarCheck, CalendarClock, Check, Clock, Copy, ExternalLink, Globe, Loader2, Mail,
   MapPin, PhoneMissed, Search, Star, ThumbsDown, Trash2, Upload, Voicemail, X, XCircle,
 } from "lucide-react";
 
@@ -98,6 +101,7 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
   const [toast, setToast] = useState<Toast | null>(null);
 
   const reqId = useRef(0);
+  const pendingSelect = useRef<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const notesRequested = useRef(new Set<string>());
@@ -127,8 +131,10 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
       setLeads(next);
       setTotal(data.total as number);
       setCounts(data.counts as TabCounts);
+      const wanted = pendingSelect.current;
+      pendingSelect.current = null;
       setSelectedId((prev) => {
-        const want = keepId ?? prev;
+        const want = wanted ?? keepId ?? prev;
         return want && next.some((l) => l.id === want) ? want : next[0]?.id ?? null;
       });
     } catch {
@@ -137,6 +143,18 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
       if (id === reqId.current) setLoading(false);
     }
   }, [say]);
+
+  // A reminder links here with ?lead=<id>: open the Callbacks tab with that lead selected
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("lead");
+    if (!id) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    pendingSelect.current = id;
+    setQ(""); setDebouncedQ("");
+    if (live.current.tab === "callbacks") load("callbacks", "", id);
+    else setTab("callbacks");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Debounce the search box
   useEffect(() => {
@@ -198,7 +216,7 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
   /** Send a note or call outcome. Resolves true on success so the form can close. */
   const submit = useCallback(async (
     outcome: Outcome,
-    extra: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string } = {},
+    extra: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string; slot?: boolean } = {},
   ): Promise<boolean> => {
     if (!lead || live.current.busy) return false;
     const leadId = lead.id;
@@ -278,13 +296,14 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
         <StatTile label="Calls today" value={stats.calls} />
         <StatTile label="Callbacks set" value={stats.callbacks} />
         <StatTile label="Sales calls booked" value={stats.booked} gold />
-        {canManage && (
-          <div className="ml-auto flex items-center">
+        <div className="ml-auto flex items-center gap-2">
+          <AlertsButton />
+          {canManage && (
             <Link href="/call-list/import" className={btnCls}>
               <Upload size={13} /> Import leads
             </Link>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {dueNow > 0 && (
@@ -395,6 +414,7 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
               onCopy={() => copyNumber(lead)}
               onSubmit={submit}
               onDelete={canManage ? removeLead : undefined}
+              canType={canManage}
             />
           ) : (
             <div className="rounded-xl border bg-card p-10 text-center text-sm text-muted-foreground ring-1 ring-foreground/5">
@@ -478,7 +498,7 @@ function StatTile({ label, value, gold }: { label: string; value: number; gold?:
 type Panel = null | "callback" | "booked";
 
 function LeadDetail({
-  lead, history, draft, onDraft, busy, copied, onCopy, onSubmit, onDelete,
+  lead, history, draft, onDraft, busy, copied, onCopy, onSubmit, onDelete, canType,
 }: {
   lead: CallLead;
   history: CallLeadNote[] | undefined;
@@ -487,10 +507,20 @@ function LeadDetail({
   busy: Outcome | "delete" | null;
   copied: boolean;
   onCopy: () => void;
-  onSubmit: (outcome: Outcome, extra?: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string }) => Promise<boolean>;
+  onSubmit: (outcome: Outcome, extra?: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string; slot?: boolean }) => Promise<boolean>;
+  /** Managers can type any time; everyone else books from the offered times. */
+  canType: boolean;
   onDelete?: () => void;
 }) {
   const phone = parsePhone(lead.phone);
+  // The time where the clinic is. Set after mount (and refreshed each minute) so the server and browser agree.
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setNow(new Date());
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const clinic = useMemo(() => (now ? clinicTime({ address: lead.address, phone: lead.phone }, now) : null), [now, lead.address, lead.phone]);
   const site = safeUrl(lead.website);
   const maps = safeUrl(lead.google_maps_url);
   const [panel, setPanel] = useState<Panel>(null);
@@ -557,6 +587,17 @@ function LeadDetail({
             {copied ? "Copied" : "Copy"}
           </span>
         </button>
+        {clinic && (
+          <p
+            className={cn(
+              "mt-2 flex items-center gap-1.5 text-xs font-semibold",
+              clinic.hours === "open" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300",
+            )}
+            title="Worked out from the clinic's address or phone area code. Clinics often keep different hours."
+          >
+            <Clock size={12} /> {clinic.summary}
+          </p>
+        )}
         {!phone.ok && phone.display && (
           <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
             This number doesn&apos;t look complete. Check it before dialling.
@@ -701,8 +742,13 @@ function LeadDetail({
               lead={lead}
               hasNote={draft.trim() !== ""}
               busy={busy === "booked"}
+              canType={canType}
               onCancel={() => setPanel(null)}
-              onSave={async (extra) => { if (await onSubmit("booked", extra)) setPanel(null); }}
+              onSave={async (extra) => {
+                const ok = await onSubmit("booked", extra);
+                if (ok) setPanel(null);
+                return ok;
+              }}
             />
           )}
         </div>
@@ -820,45 +866,93 @@ function CallbackForm({ busy, onCancel, onSave }: {
   );
 }
 
-function BookingForm({ lead, hasNote, busy, onCancel, onSave }: {
-  lead: CallLead; hasNote: boolean; busy: boolean; onCancel: () => void;
-  onSave: (extra: { when: string; with: SalesCallWith; contact_name?: string; email?: string }) => void | Promise<void>;
+function BookingForm({ lead, hasNote, busy, canType, onCancel, onSave }: {
+  lead: CallLead; hasNote: boolean; busy: boolean; canType: boolean; onCancel: () => void;
+  onSave: (extra: { when: string; with: SalesCallWith; contact_name?: string; email?: string; slot?: boolean }) => boolean | Promise<boolean>;
 }) {
+  // Normally he taps a time from the free slots. Typing any time is only for managers, or when no hours are set up yet.
+  const [manual, setManual] = useState(false);
+  const [unavailable, setUnavailable] = useState<null | "not-set-up" | "error">(null);
+  const [pick, setPick] = useState<Picked | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
   const [when, setWhen] = useState("");
   const [withWhom, setWithWhom] = useState<SalesCallWith | "">("");
   const [contact, setContact] = useState("");
   const [email, setEmail] = useState(lead.email ?? "");
-  const iso = when ? sydneyWallToISO(when) : null;
-  const ready = !!iso && withWhom !== "";
-  const who = withWhom === "either" ? "Ryan or Lachlan" : withWhom ? withWhom.charAt(0).toUpperCase() + withWhom.slice(1) : "Ryan or Lachlan";
   const ref = useScrollIntoView<HTMLFormElement>();
+
+  const typing = manual || unavailable !== null;
+  const iso = when ? sydneyWallToISO(when) : null;
+  const ready = typing ? !!iso && withWhom !== "" : !!pick;
+  const who = typing
+    ? (withWhom === "either" ? "Ryan or Lachlan" : withWhom ? withWhom.charAt(0).toUpperCase() + withWhom.slice(1) : "Ryan or Lachlan")
+    : pick ? PERSON_LABEL[pick.person] : "Ryan or Lachlan";
+  const typedClinic = typing && iso ? clinicClockForSlot(lead, iso) : null;
 
   return (
     <form
       ref={ref}
       className="mt-4 space-y-4 rounded-xl border bg-muted/30 p-4 animate-in fade-in slide-in-from-top-1"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        if (iso && withWhom) void onSave({ when: iso, with: withWhom, contact_name: contact.trim() || undefined, email: email.trim() || undefined });
+        const extras = { contact_name: contact.trim() || undefined, email: email.trim() || undefined };
+        if (typing) {
+          if (iso && withWhom) await onSave({ when: iso, with: withWhom, ...extras });
+        } else if (pick) {
+          const ok = await onSave({ when: pick.start, with: pick.person, slot: true, ...extras });
+          // Most likely someone just took that time: reload the free times.
+          if (!ok) { setPick(null); setRefreshKey((k) => k + 1); }
+        }
       }}
     >
       <p className="text-sm font-semibold">Book the sales call</p>
 
-      <div>
-        <span className="mb-1.5 block text-xs font-semibold text-foreground/80">Who is it with?</span>
-        <div role="radiogroup" aria-label="Who is the sales call with" className="inline-flex gap-0.5 rounded-full border bg-background p-[3px]">
-          {([["ryan", "Ryan"], ["lachlan", "Lachlan"], ["either", "Either"]] as [SalesCallWith, string][]).map(([v, label]) => (
-            <label key={v} className="relative block">
-              <input type="radio" name="with" value={v} checked={withWhom === v} onChange={() => setWithWhom(v)} className="peer absolute inset-0 m-0 h-full w-full cursor-pointer opacity-0" />
-              <span className="block rounded-full px-4 py-1.5 text-[13px] font-semibold text-muted-foreground transition-colors peer-checked:bg-primary peer-checked:text-primary-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
-                {label}
-              </span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <SydneyTimeField value={when} onChange={setWhen} />
+      {typing ? (
+        <>
+          {unavailable === "not-set-up" && (
+            <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+              Booking times haven&apos;t been set up yet, so pick any time and Ryan or Lachlan will confirm it.
+            </p>
+          )}
+          {unavailable === "error" && (
+            <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-300">
+              Couldn&apos;t load the free times just now. You can pick a time yourself, but it may be refused if it clashes.
+            </p>
+          )}
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-foreground/80">Who is it with?</span>
+            <div role="radiogroup" aria-label="Who is the sales call with" className="inline-flex gap-0.5 rounded-full border bg-background p-[3px]">
+              {([["ryan", "Ryan"], ["lachlan", "Lachlan"], ["either", "Either"]] as [SalesCallWith, string][]).map(([v, label]) => (
+                <label key={v} className="relative block">
+                  <input type="radio" name="with" value={v} checked={withWhom === v} onChange={() => setWithWhom(v)} className="peer absolute inset-0 m-0 h-full w-full cursor-pointer opacity-0" />
+                  <span className="block rounded-full px-4 py-1.5 text-[13px] font-semibold text-muted-foreground transition-colors peer-checked:bg-primary peer-checked:text-primary-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
+                    {label}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <SydneyTimeField value={when} onChange={setWhen} />
+          {typedClinic && (
+            <p className="text-xs font-semibold text-primary">That&apos;s {typedClinic.clock} for this {typedClinic.state} clinic.</p>
+          )}
+          {manual && unavailable === null && (
+            <button type="button" onClick={() => { setManual(false); setWhen(""); }} className="text-xs font-semibold text-muted-foreground hover:text-foreground hover:underline">
+              Back to the free times
+            </button>
+          )}
+        </>
+      ) : (
+        <SlotPicker
+          lead={lead}
+          value={pick}
+          onPick={setPick}
+          refreshKey={refreshKey}
+          onUnavailable={setUnavailable}
+          onManual={canType ? () => setManual(true) : undefined}
+        />
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
@@ -886,5 +980,27 @@ function BookingForm({ lead, hasNote, busy, onCancel, onSave }: {
         </button>
       </div>
     </form>
+  );
+}
+
+/** Turn on desktop notifications so callback reminders reach him even when this tab isn't in front. */
+function AlertsButton() {
+  const [perm, setPerm] = useState<NotificationPermission | "unsupported" | null>(null);
+  useEffect(() => { setPerm(typeof Notification === "undefined" ? "unsupported" : Notification.permission); }, []);
+  if (perm === null || perm === "unsupported") return null;
+  if (perm === "granted") {
+    return <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300"><Bell size={12} /> Callback alerts on</span>;
+  }
+  if (perm === "denied") {
+    return <span className="text-xs text-muted-foreground" title="Allow notifications for this site in your browser settings to turn them on.">Desktop alerts are blocked in this browser</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={async () => { try { setPerm(await Notification.requestPermission()); } catch { /* ignore */ } }}
+      className={btnCls}
+    >
+      <Bell size={13} /> Turn on callback alerts
+    </button>
   );
 }
