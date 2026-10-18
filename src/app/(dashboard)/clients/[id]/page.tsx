@@ -6,6 +6,8 @@ import { ClientForm } from "./client-form";
 import { TasksSection } from "./tasks-section";
 import { InvoicesSection, type InvoiceRow } from "./invoices-section";
 import { isSetupError } from "@/lib/hq/supabase-admin";
+import { can } from "@/lib/hq/access";
+import { getCurrentAccess } from "@/lib/hq/access-server";
 import { DeleteApplicationButton, DeleteClientButton } from "./delete-buttons";
 
 const STAGE_LABELS: Record<string, string> = {
@@ -28,6 +30,10 @@ export default async function ClientDetailPage({
 }) {
   const { id } = await params;
   const supabase = await createClient();
+
+  // Invoices are money: only people with "Revenue and invoices" see or load them.
+  const access = await getCurrentAccess(supabase);
+  const showInvoices = access.ok && can(access.access, "finance");
 
   // Separate queries — avoids any embedded-join schema-cache issues
   const [
@@ -58,11 +64,13 @@ export default async function ClientDetailPage({
       .select("id, status, selected_products, upfront_total_aud, updated_at")
       .eq("client_id", id)
       .order("updated_at", { ascending: false }),
-    supabase
-      .from("client_invoices")
-      .select("id, invoice_number, kind, issued_on, amount_aud, status, paid_on, file_name, notes")
-      .eq("client_id", id)
-      .order("issued_on", { ascending: false }),
+    showInvoices
+      ? supabase
+          .from("client_invoices")
+          .select("id, invoice_number, kind, issued_on, amount_aud, status, paid_on, file_name, notes")
+          .eq("client_id", id)
+          .order("issued_on", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (!client) notFound();
@@ -178,12 +186,14 @@ export default async function ClientDetailPage({
       </div>
 
       {/* Invoices — uploaded PDFs; paid ones feed the home-page earnings */}
-      <InvoicesSection
-        clientId={client.id}
-        clientName={client.company_name}
-        invoices={(invoices ?? []) as InvoiceRow[]}
-        setupNeeded={isSetupError(invoicesError)}
-      />
+      {showInvoices && (
+        <InvoicesSection
+          clientId={client.id}
+          clientName={client.company_name}
+          invoices={(invoices ?? []) as InvoiceRow[]}
+          setupNeeded={isSetupError(invoicesError)}
+        />
+      )}
 
       {/* Editable form */}
       <ClientForm

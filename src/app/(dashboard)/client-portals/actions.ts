@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { CLIENT_PORTALS_ENABLED } from "@/lib/hq/feature-flags";
+import { assertAccess } from "@/lib/hq/access-guard";
 
 /**
  * Regenerate a client's portal token — instantly invalidates the old
@@ -10,6 +11,8 @@ import { CLIENT_PORTALS_ENABLED } from "@/lib/hq/feature-flags";
  * rotate it on a schedule.
  */
 export async function regeneratePortalToken(clientId: string) {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("manager");
   // The page is hidden while portals are off, but a server action can still be
   // called directly — refuse it too.
   if (!CLIENT_PORTALS_ENABLED) throw new Error("Client portals are switched off.");

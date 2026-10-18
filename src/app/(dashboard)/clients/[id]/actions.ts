@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { assertAccess } from "@/lib/hq/access-guard";
 
 export type DeleteResult =
   | { ok: true }
@@ -16,6 +17,8 @@ export async function deleteApplicationAction(
   applicationId: string,
   clientId:      string,
 ): Promise<DeleteResult> {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("clients");
   const supabase = await createClient();
   const { error } = await supabase
     .from("applications")
@@ -37,6 +40,8 @@ export async function deleteApplicationAction(
  * Redirects back to /clients on success — the page we were on no longer exists.
  */
 export async function deleteClientAction(clientId: string): Promise<DeleteResult> {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("clients");
   const supabase = await createClient();
 
   await supabase.from("applications").delete().eq("client_id", clientId);

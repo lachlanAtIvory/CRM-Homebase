@@ -48,9 +48,14 @@ const VISIBLE_NAV = NAV.filter(
   (item) => item.href !== "/client-portals" || CLIENT_PORTALS_ENABLED,
 );
 
-export function Sidebar() {
+/**
+ * `visible` is the list of sidebar links this person may use (worked out on
+ * the server from their access). Anything not on it isn't rendered at all.
+ */
+export function Sidebar({ visible }: { visible: string[] }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const shown = VISIBLE_NAV.filter((item) => visible.includes(item.href));
 
   return (
     <aside
@@ -80,7 +85,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-0.5 p-2">
-        {VISIBLE_NAV.map(({ href, label, icon: Icon }) => {
+        {shown.map(({ href, label, icon: Icon }) => {
           const active =
             href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (

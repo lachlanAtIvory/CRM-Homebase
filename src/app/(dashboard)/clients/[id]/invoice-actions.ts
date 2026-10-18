@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { adminClient, INVOICE_BUCKET } from "@/lib/hq/supabase-admin";
+import { assertAccess } from "@/lib/hq/access-guard";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -20,6 +21,8 @@ function refresh(clientId: string) {
 
 /** paidOn = a YYYY-MM-DD date marks it paid on that day; null puts it back to outstanding. */
 export async function setInvoicePaid(invoiceId: string, clientId: string, paidOn: string | null) {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("finance");
   const supabase = await requireUser();
   if (paidOn !== null && !DATE_RE.test(paidOn)) throw new Error("Invalid date");
 
@@ -33,6 +36,8 @@ export async function setInvoicePaid(invoiceId: string, clientId: string, paidOn
 }
 
 export async function deleteInvoice(invoiceId: string, clientId: string) {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("finance");
   const supabase = await requireUser();
 
   const { data: invoice } = await supabase

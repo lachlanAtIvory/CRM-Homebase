@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { actorDisplayName, actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
 import { createCalendarEvent } from "@/lib/hq/google-calendar";
+import { adminClient } from "@/lib/hq/supabase-admin";
 
 /**
  * Motivation dashboard — schedule a callback.
@@ -39,6 +40,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "when must be a valid date/time" }, { status: 400 });
   }
 
+  // Access is already checked; the server's own client writes the calendar and task rows.
+  const writer = adminClient();
+
   const phone = (body.phone ?? "").trim();
   const note  = (body.note ?? "").trim();
   const bookedBy = actorDisplayName(actor);
@@ -61,7 +65,7 @@ export async function POST(req: NextRequest) {
     ].filter(Boolean).join("\n"),
   });
 
-  const { error: meetingError } = await supabase.from("meetings").insert({
+  const { error: meetingError } = await writer.from("meetings").insert({
     event_id:     googleEvent?.eventId ?? `hq_cb_${crypto.randomUUID()}`,
     title,
     start_time:   start,
@@ -80,7 +84,7 @@ export async function POST(req: NextRequest) {
     hour: "2-digit", minute: "2-digit", hour12: false,
   }).formatToParts(when);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  await supabase.from("tasks").insert({
+  await writer.from("tasks").insert({
     client_id: null,
     title:     `${title}${note ? ` — ${note}` : ""}`,
     due_date:  `${get("year")}-${get("month")}-${get("day")}`,
@@ -88,7 +92,7 @@ export async function POST(req: NextRequest) {
   });
 
   // 3. The dial log
-  await supabase.from("prospect_events").insert({
+  await writer.from("prospect_events").insert({
     type:   "cold_call",
     actor,
     detail: { source: "motivation", result: "callback", name, phone, when: when.toISOString(), note },

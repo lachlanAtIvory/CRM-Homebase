@@ -2,6 +2,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchCallLeads, fetchTabCounts, isMissingTable } from "@/lib/hq/call-leads";
 import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
+import { can } from "@/lib/hq/access";
+import { getCurrentAccess } from "@/lib/hq/access-server";
 import { CallList } from "./call-list";
 
 /**
@@ -17,6 +19,9 @@ export default async function CallListPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   const actor = actorFromEmail(user?.email);
+  // Importing and deleting leads is for managers; the caller just works the list.
+  const access = await getCurrentAccess(supabase);
+  const canManage = access.ok && can(access.access, "manager");
 
   const [result, counts, stats] = await Promise.all([
     fetchCallLeads(supabase, { tab: "todo" }),
@@ -39,5 +44,5 @@ export default async function CallListPage() {
     );
   }
 
-  return <CallList initial={{ leads: result.leads, total: result.total, counts, stats }} />;
+  return <CallList initial={{ leads: result.leads, total: result.total, counts, stats }} canManage={canManage} />;
 }

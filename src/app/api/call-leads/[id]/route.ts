@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requireAccessApi } from "@/lib/hq/access-guard";
 import { deleteLead } from "@/lib/hq/call-lead-admin";
 
 /**
@@ -16,6 +17,7 @@ export async function DELETE(
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  { const check = await requireAccessApi("manager"); if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status }); }
 
   const { id } = await params;
   const result = await deleteLead(supabase, id);
