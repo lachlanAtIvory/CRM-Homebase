@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { assertAccess } from "@/lib/hq/access-guard";
 
 export type DeleteResult =
   | { ok: true }
@@ -14,6 +15,8 @@ export type DeleteResult =
 export async function deleteApplicationFromList(
   applicationId: string,
 ): Promise<DeleteResult> {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("applications");
   const supabase = await createClient();
   const { error } = await supabase
     .from("applications")

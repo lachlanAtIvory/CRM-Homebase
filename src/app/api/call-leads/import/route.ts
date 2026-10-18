@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { requireAccessApi } from "@/lib/hq/access-guard";
 import { nameKey, parseLeadText, type ImportLead } from "@/lib/hq/call-lead-import";
 import { isMissingTable } from "@/lib/hq/call-leads";
 import { WEBSITE_FROM_KEY } from "@/lib/hq/website-guess";
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  { const check = await requireAccessApi("manager"); if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status }); }
 
   let body: { text?: unknown; dryRun?: unknown };
   try {

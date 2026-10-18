@@ -60,6 +60,13 @@ export async function applyOutcome(
   user: { email?: string | null },
   id: string,
   body: OutcomeBody,
+  /**
+   * `writer` creates the client, deal and calendar entry when a sales call is
+   * booked. The caller's own session can't write those tables (the database
+   * lock only lets him touch the call list), so the route passes the server's
+   * own client, used only after it has checked he has the Call List section.
+   */
+  deps: { writer?: SupabaseClient } = {},
 ): Promise<OutcomeResponse> {
   const actor = actorFromEmail(user.email);
 
@@ -110,7 +117,7 @@ export async function applyOutcome(
     ].filter(Boolean) as string[];
 
     const booking = await bookSalesCall(
-      supabase,
+      deps.writer ?? supabase,
       { actor, userEmail: user.email ?? null },
       {
         businessName: lead.business_name,

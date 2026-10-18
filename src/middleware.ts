@@ -1,5 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { can, landingPath, routeNeed } from "@/lib/hq/access";
+import { resolveAccess } from "@/lib/hq/access-server";
 
 // Public paths — accessible without auth. Includes analytics endpoints
 // because the tracking script + beacon are called from public websites,
@@ -114,6 +116,40 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
+  }
+
+  // ── Signed in: are they on the team, and is this somewhere they may go? ──
+  // Checked on every request, so switching someone off in Settings > Team
+  // takes effect immediately. Ryan and Lachlan (ALLOWED_EMAILS) skip the
+  // database lookup entirely.
+  if (user && !isPublic) {
+    const result = await resolveAccess(supabase, user.email);
+
+    if (!result.ok) {
+      if (result.reason === "error") {
+        // Don't guess. Deny, but don't sign them out over a hiccup.
+        return new NextResponse("We couldn't check your access just now. Please refresh in a moment.", { status: 503 });
+      }
+      // Not on the team any more (or switched off): sign out and show the sign-in page.
+      await supabase.auth.signOut();
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.search = "?error=not_allowed";
+      const redirect = NextResponse.redirect(url);
+      response.cookies.getAll().forEach((c) => redirect.cookies.set(c));
+      return redirect;
+    }
+
+    if (!can(result.access, routeNeed(path, request.method))) {
+      if (path.startsWith("/api/")) {
+        return NextResponse.json({ error: "You don't have access to this." }, { status: 403 });
+      }
+      // A page (or a form on one): send them to the first screen they do have.
+      const url = request.nextUrl.clone();
+      url.pathname = landingPath(result.access);
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;

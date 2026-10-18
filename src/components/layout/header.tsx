@@ -35,15 +35,19 @@ const PAGE_TITLES: Record<string, string> = {
   "/client-portals":   "Client Portals",
   "/calendar":         "Calendar",
   "/settings":         "Settings",
+  "/settings/team":    "Team Access",
+  "/no-access":        "Agent Ivory CRM",
   "/application/new":  "Launch Application",
 };
 
 interface HeaderProps {
   email: string;
   avatarUrl?: string | null;
+  /** The Launch Application button only shows for people with the Applications section. */
+  canLaunchApplication?: boolean;
 }
 
-export function Header({ email, avatarUrl }: HeaderProps) {
+export function Header({ email, avatarUrl, canLaunchApplication = true }: HeaderProps) {
   const pathname = usePathname();
   const title = PAGE_TITLES[pathname] ?? "Agent Ivory CRM";
   const initials = email[0]?.toUpperCase() ?? "?";
@@ -54,13 +58,15 @@ export function Header({ email, avatarUrl }: HeaderProps) {
 
       <div className="flex items-center gap-3">
         {/* Launch Application — primary CTA in the top-right */}
-        <Link
-          href="/application/new"
-          className="group inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow-md hover:shadow-primary/20 active:scale-[0.96]"
-        >
-          <Rocket size={13} className="transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:rotate-12" />
-          Launch Application
-        </Link>
+        {canLaunchApplication && (
+          <Link
+            href="/application/new"
+            className="group inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow-md hover:shadow-primary/20 active:scale-[0.96]"
+          >
+            <Rocket size={13} className="transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:rotate-12" />
+            Launch Application
+          </Link>
+        )}
 
         {/* Light / dark toggle */}
         <ThemeToggle />

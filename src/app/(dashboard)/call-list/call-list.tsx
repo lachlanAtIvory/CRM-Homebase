@@ -81,7 +81,7 @@ type Toast = { text: string; tone: "ok" | "error" };
 /* ────────────────────────────────────────────────────────────────────────────
    Screen
 ──────────────────────────────────────────────────────────────────────────── */
-export function CallList({ initial }: { initial: CallListInitial }) {
+export function CallList({ initial, canManage = false }: { initial: CallListInitial; canManage?: boolean }) {
   const [tab, setTab] = useState<Tab>("todo");
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -278,11 +278,13 @@ export function CallList({ initial }: { initial: CallListInitial }) {
         <StatTile label="Calls today" value={stats.calls} />
         <StatTile label="Callbacks set" value={stats.callbacks} />
         <StatTile label="Sales calls booked" value={stats.booked} gold />
-        <div className="ml-auto flex items-center">
-          <Link href="/call-list/import" className={btnCls}>
-            <Upload size={13} /> Import leads
-          </Link>
-        </div>
+        {canManage && (
+          <div className="ml-auto flex items-center">
+            <Link href="/call-list/import" className={btnCls}>
+              <Upload size={13} /> Import leads
+            </Link>
+          </div>
+        )}
       </div>
 
       {dueNow > 0 && (
@@ -299,13 +301,21 @@ export function CallList({ initial }: { initial: CallListInitial }) {
       {noLeadsAtAll && !searching ? (
         <div className="rounded-xl border bg-card p-10 text-center ring-1 ring-foreground/5">
           <p className="text-base font-semibold">No leads in the call list yet</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Copy the rows from the scraped Google Sheet (include the header row) and paste them in. Each lead
-            keeps its own notes and call history.
-          </p>
-          <Link href="/call-list/import" className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.97]">
-            <Upload size={14} /> Import leads
-          </Link>
+          {canManage ? (
+            <>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                Copy the rows from the scraped Google Sheet (include the header row) and paste them in. Each lead
+                keeps its own notes and call history.
+              </p>
+              <Link href="/call-list/import" className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.97]">
+                <Upload size={14} /> Import leads
+              </Link>
+            </>
+          ) : (
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+              There are no leads to call yet. Ryan or Lachlan will add the list, then it shows up here.
+            </p>
+          )}
         </div>
       ) : (
         <div className="grid items-start gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
@@ -384,7 +394,7 @@ export function CallList({ initial }: { initial: CallListInitial }) {
               copied={copiedId === lead.id}
               onCopy={() => copyNumber(lead)}
               onSubmit={submit}
-              onDelete={removeLead}
+              onDelete={canManage ? removeLead : undefined}
             />
           ) : (
             <div className="rounded-xl border bg-card p-10 text-center text-sm text-muted-foreground ring-1 ring-foreground/5">
@@ -478,7 +488,7 @@ function LeadDetail({
   copied: boolean;
   onCopy: () => void;
   onSubmit: (outcome: Outcome, extra?: { when?: string; with?: SalesCallWith; contact_name?: string; email?: string }) => Promise<boolean>;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const phone = parsePhone(lead.phone);
   const site = safeUrl(lead.website);
@@ -668,14 +678,16 @@ function LeadDetail({
           >
             <Ban size={12} /> They asked not to be called again
           </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={busy !== null}
-            className="ml-4 mt-3 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-destructive disabled:opacity-50"
-          >
-            {busy === "delete" ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />} Delete this lead
-          </button>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={busy !== null}
+              className="ml-4 mt-3 inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-destructive disabled:opacity-50"
+            >
+              {busy === "delete" ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />} Delete this lead
+            </button>
+          )}
 
           {panel === "callback" && (
             <CallbackForm

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { resend, FROM_EMAIL, COMPANY_NAME } from "@/lib/resend";
 import { renderInvoiceHTML, type InvoiceData } from "@/lib/invoice-template";
 import { applyDiscount } from "./pricing";
+import { assertAccess } from "@/lib/hq/access-guard";
 
 // One service the business offers. Listed up-top so team members can be
 // assigned to them by id.
@@ -78,6 +79,8 @@ export type SubmitResult =
 // is supplied). No email sent.
 // ---------------------------------------------------------------------------
 export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("applications");
   const supabase = await createClient();
 
   const validation = validate(input);
@@ -148,6 +151,8 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
 // then sends the invoice email via Resend.
 // ---------------------------------------------------------------------------
 export async function submitApplication(input: ApplicationInput): Promise<SubmitResult> {
+  // Server actions are reachable on their own, so each one checks access itself.
+  await assertAccess("applications");
   const supabase = await createClient();
 
   const validation = validate(input);

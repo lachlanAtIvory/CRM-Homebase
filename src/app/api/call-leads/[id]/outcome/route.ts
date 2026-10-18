@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { applyOutcome, type OutcomeBody } from "@/lib/hq/call-lead-outcome";
+import { adminClient } from "@/lib/hq/supabase-admin";
 
 /**
  * Call list — log a note or a call outcome against a lead.
@@ -25,6 +26,6 @@ export async function POST(
   }
 
   const { id } = await params;
-  const { status, json } = await applyOutcome(supabase, user, id, body);
+  const { status, json } = await applyOutcome(supabase, user, id, body, { writer: adminClient() });
   return NextResponse.json(json, { status });
 }

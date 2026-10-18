@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { actorFromEmail, fetchMotivationStats } from "@/lib/hq/motivation-stats";
 import { bookSalesCall } from "@/lib/hq/book-sales-call";
+import { adminClient } from "@/lib/hq/supabase-admin";
 
 /**
  * Motivation dashboard — book a sales call.
@@ -43,8 +44,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "when must be a valid date/time — no booking without a locked time" }, { status: 400 });
   }
 
+  // The route has already checked this person has the Motivation section; the
+  // server's own client does the writes (clients, deals, calendar) on their behalf.
   const booking = await bookSalesCall(
-    supabase,
+    adminClient(),
     { actor, userEmail: user.email ?? null },
     {
       businessName,
