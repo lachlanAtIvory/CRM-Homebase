@@ -133,7 +133,10 @@ const RULES: Rule[] = [
   // Managers only: specific things inside otherwise-open sections, and admin tools
   { path: "/settings/team", need: "manager" },
   { path: "/settings/availability", need: "manager" },
+  { path: "/settings/justcall", need: "manager" },
   { path: "/api/team", need: "manager" },
+  { path: "/api/justcall/recording", need: "call-list" },
+  { path: "/api/justcall", need: "manager" },
   { path: "/api/availability/slots", need: "call-list" },
   { path: "/api/availability", need: "manager" },
   { path: "/call-list/import", need: "manager" },

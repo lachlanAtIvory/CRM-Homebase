@@ -90,4 +90,7 @@ eq("the slot list is open to the Call List but editing hours is not", [allows(ja
 eq("a member WITHOUT the Call List can't use the slot list", allows(member(["tasks"]), "/api/availability/slots"), false);
 eq("preview endpoint is for anyone signed in (the handler checks for a real manager)", [allows(jan, "/api/preview", "POST"), allows(off, "/api/preview", "POST")], [true, false]);
 eq("the reminder poll is a Call List route", [allows(jan, "/api/call-leads/reminders"), allows(member(["tasks"]), "/api/call-leads/reminders")], [true, false]);
+// ── JustCall
+eq("JustCall: the Call List can play recordings, only managers see the JustCall settings and status", [allows(janFull, "/api/justcall/recording/abc"), allows(janFull, "/settings/justcall"), allows(janFull, "/api/justcall/status"), allows(manager, "/settings/justcall"), allows(manager, "/api/justcall/status")], [true, false, false, true, true]);
+eq("JustCall: a member without the Call List can't play recordings", allows(member(["tasks"]), "/api/justcall/recording/abc"), false);
 console.log(`\n${passes} passed, ${fails} failed`);

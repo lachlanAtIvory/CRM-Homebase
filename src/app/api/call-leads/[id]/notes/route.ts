@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { fetchLeadCalls } from "@/lib/hq/justcall-events";
 
 /** Call list — a lead's notes and call history, newest first. */
 export const runtime = "nodejs";
@@ -20,5 +21,6 @@ export async function GET(
     .order("occurred_at", { ascending: false })
     .limit(100);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ notes: data ?? [] });
+  const calls = await fetchLeadCalls(supabase, id);
+  return NextResponse.json({ notes: data ?? [], calls });
 }

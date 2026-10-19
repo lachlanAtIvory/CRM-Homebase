@@ -272,5 +272,55 @@ try {
   ok("UNDO: Jan with Tasks can read clients again (the old behaviour)", (await count(JAN, "clients")) >= 1);
   await db.exec(sql("migrations/20261019130000_tasks_ownership_and_client_privacy.sql"));
   ok("...and re-applying the migration restores the privacy", (await count(JAN, "clients")) === 0 && (await titles(JAN)).length >= 1);
+
+  // ═══════════════════════════════════════════════════════════════
+  // Round 3: JustCall call log (call_activity, justcall_events)
+  // ═══════════════════════════════════════════════════════════════
+  await db.exec(sql("migrations/20261020120000_add_justcall.sql"));
+  ok("round 3 (JustCall) migration applies on top of the lock", true);
+  await db.exec(sql("migrations/20261020120000_add_justcall.sql"));
+  ok("the JustCall migration is safe to run twice", true);
+
+  await db.exec(`update public.team_members set sections = '{call-list}' where email = '${JAN}'`);
+  await db.exec(`update public.team_members set sections = '{tasks,clients}' where email = '${SAM}'`);
+  await db.exec(`
+    insert into public.call_activity (provider_call_id, call_sid, lead_id, direction, call_type, contact_e164, agent_email, started_at, duration_seconds, recording_url)
+      select '1001', 'CA1', id, 'outgoing', 'answered', '+61755551234', '${JAN}', now(), 130, 'https://app.justcall.io/rec/1.mp3' from public.call_leads limit 1;
+    insert into public.call_activity (provider_call_id, direction, call_type, contact_e164) values ('1002', 'incoming', 'missed', '+61400000000');
+    insert into public.justcall_events (event_type, provider_call_id, outcome) values ('call.completed', '1001', 'processed');
+  `);
+
+  ok("JAN (call-list) reads the call log", (await count(JAN, "call_activity")) === 2);
+  ok("MANAGER reads the call log", (await count(L, "call_activity")) === 2 && (await count(R, "call_activity")) === 2);
+  ok("SAM (tasks + clients, no call list) can't read the call log", (await count(SAM, "call_activity")) === 0);
+  ok("STRANGER, switched-off member and anon can't read the call log", (await count(STR, "call_activity")) === 0 && (await count(OLD, "call_activity")) === 0 && (() => true)());
+  const anonCalls = await count("anon", "call_activity");
+  ok("ANON can't read the call log", anonCalls === 0 || String(anonCalls).startsWith("ERR"), anonCalls);
+
+  ok("MANAGER reads the webhook log", (await count(L, "justcall_events")) === 1);
+  ok("JAN cannot read the webhook log (managers only)", (await count(JAN, "justcall_events")) === 0);
+  ok("SAM and a stranger can't read the webhook log", (await count(SAM, "justcall_events")) === 0 && (await count(STR, "justcall_events")) === 0);
+
+  // Nobody writes from a browser session: only the app's server (service role) records calls
+  const janIns2 = await tryWrite(JAN, `insert into public.call_activity (provider_call_id, direction, call_type) values ('forged', 'outgoing', 'answered')`);
+  ok("JAN cannot add a call to the log", typeof janIns2 === "string" && /row-level security/.test(janIns2), janIns2);
+  ok("JAN cannot edit or delete logged calls (0 rows)", (await tryWrite(JAN, `update public.call_activity set duration_seconds = 9999`)) === 0 && (await tryWrite(JAN, `delete from public.call_activity`)) === 0);
+  const mgrIns = await tryWrite(L, `insert into public.call_activity (provider_call_id, direction, call_type) values ('forged2', 'outgoing', 'answered')`);
+  ok("even a MANAGER session cannot write the call log directly", typeof mgrIns === "string" && /row-level security/.test(mgrIns), mgrIns);
+  ok("MANAGER cannot write the webhook log either", typeof (await tryWrite(L, `insert into public.justcall_events (outcome) values ('processed')`)) === "string");
+  ok("...and the log is untouched", (await count("service", "call_activity")) === 2);
+
+  // The log's own rules
+  const dup = await tryWrite("service", `insert into public.call_activity (provider_call_id, direction, call_type) values ('1001', 'outgoing', 'answered')`);
+  ok("the same JustCall call can't be logged twice (unique)", typeof dup === "string" && /unique|duplicate/i.test(dup), dup);
+  const badType = await tryWrite("service", `insert into public.call_activity (provider_call_id, direction, call_type) values ('9', 'outgoing', 'banana')`);
+  ok("an unknown call type is refused", typeof badType === "string", badType);
+  const badOutcome = await tryWrite("service", `insert into public.justcall_events (outcome) values ('banana')`);
+  ok("an unknown webhook outcome is refused", typeof badOutcome === "string", badOutcome);
+  await db.exec(`delete from public.call_leads where id = (select lead_id from public.call_activity where provider_call_id = '1001')`);
+  const orphan = (await db.query(`select lead_id from public.call_activity where provider_call_id = '1001'`)).rows[0];
+  ok("deleting a lead keeps its calls in the log (lead becomes empty)", orphan && orphan.lead_id === null, orphan);
+  const stamp = (await db.query(`select updated_at >= created_at as ok from public.call_activity where provider_call_id = '1001'`)).rows[0];
+  ok("updated_at is maintained", stamp?.ok === true);
 } catch (e) { fails++; console.log("ERROR:", String(e.message).slice(0, 400)); }
 console.log(`\n${passes} passed, ${fails} failed`);

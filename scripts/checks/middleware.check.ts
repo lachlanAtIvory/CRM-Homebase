@@ -61,7 +61,7 @@ const JAN = "jan@agentivory.com";
   asUser(null);
   let r = await hit("/pipeline");
   ok("signed out -> /login", r.redirect === "/login", r);
-  for (const p of ["/login", "/auth/callback", "/api/ingest", "/api/track", "/track.js", "/concierge/ivory-suites", "/api/concierge/chat", "/client/abc123", "/api/jobs/9/complete"]) {
+  for (const p of ["/login", "/auth/callback", "/api/ingest", "/api/track", "/track.js", "/concierge/ivory-suites", "/api/concierge/chat", "/client/abc123", "/api/jobs/9/complete", "/api/justcall/webhook"]) {
     r = await hit(p, { method: "POST" });
     ok(`public ${p} stays public`, r.passed, r);
   }
@@ -139,6 +139,10 @@ const JAN = "jan@agentivory.com";
   r = await hit("/ivory-suites", { host: "concierge.agentivory.com" }); ok("concierge host serves guests with no sign-in", r.passed, r);
   r = await hit("/call-list", { host: "concierge.agentivory.com" }); ok("concierge host still 404s the internal Call List", r.status === 404, r);
   r = await hit("/api/call-leads", { host: "concierge.agentivory.com" }); ok("...and its API", r.status === 404, r);
+  r = await hit("/api/justcall/webhook", { host: "concierge.agentivory.com", method: "POST" }); ok("...and the JustCall webhook is only on the CRM host", r.status === 404, r);
+  asUser(null);
+  r = await hit("/api/justcall/recording/abc"); ok("signed out: recordings are NOT public (only the webhook is)", r.redirect === "/login", r);
+  r = await hit("/api/justcall/status"); ok("signed out: the JustCall status is not public either", r.redirect === "/login", r);
 
 
   // ── a manager previewing as Jan is held to Jan's rules

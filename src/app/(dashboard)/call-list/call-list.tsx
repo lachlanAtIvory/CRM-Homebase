@@ -11,6 +11,9 @@ import { parsePhone } from "@/lib/hq/phone";
 import { WEBSITE_FROM_KEY } from "@/lib/hq/website-guess";
 import { clinicClockForSlot, clinicTime } from "@/lib/hq/clinic-time";
 import { PERSON_LABEL } from "@/lib/hq/availability";
+import { describeCall, formatDuration } from "@/lib/hq/justcall-format";
+import { JUSTCALL_DIALER_ENABLED, openDialer } from "@/lib/hq/justcall-dial";
+import type { CallActivity } from "@/lib/hq/justcall-events";
 import { SlotPicker, type Picked } from "./slot-picker";
 import {
   formatSydney, formatViewerLocal, quickTimes, sydneyWallToISO, viewerIsOnSydneyTime,
@@ -19,7 +22,7 @@ import type { MotivationStats } from "@/lib/hq/motivation-stats";
 import { actorDisplayName, type Actor } from "@/lib/hq/motivation-stats";
 import {
   Bell, Ban, CalendarCheck, CalendarClock, Check, Clock, Copy, ExternalLink, Globe, Loader2, Mail,
-  MapPin, PhoneMissed, Search, Star, ThumbsDown, Trash2, Upload, Voicemail, X, XCircle,
+  MapPin, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Search, Star, ThumbsDown, Trash2, Upload, Voicemail, X, XCircle,
 } from "lucide-react";
 
 export type CallListInitial = {
@@ -96,6 +99,8 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<Outcome | "delete" | null>(null);
   const [notes, setNotes] = useState<Record<string, CallLeadNote[]>>({});
+  const [calls, setCalls] = useState<Record<string, CallActivity[]>>({});
+  const [watching, setWatching] = useState<string | null>(null);   // a lead we just dialled: waiting for its call to land
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -105,6 +110,7 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const notesRequested = useRef(new Set<string>());
+  const callBaseline = useRef(0);
   const live = useRef({ tab, q: debouncedQ, selectedId, busy });
   live.current = { tab, q: debouncedQ, selectedId, busy };
 
@@ -177,15 +183,43 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
     return () => clearInterval(t);
   }, [load]);
 
+  /** Load a lead's notes and JustCall calls. */
+  const loadHistory = useCallback(async (leadId: string) => {
+    try {
+      const r = await fetch(`/api/call-leads/${leadId}/notes`);
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (d?.notes) setNotes((n) => ({ ...n, [leadId]: d.notes }));
+      if (Array.isArray(d?.calls)) setCalls((c) => ({ ...c, [leadId]: d.calls }));
+      return d as { notes?: CallLeadNote[]; calls?: CallActivity[] };
+    } catch { return null; }
+  }, []);
+
   // Fetch the selected lead's history once
   useEffect(() => {
     if (!selectedId || notesRequested.current.has(selectedId)) return;
     notesRequested.current.add(selectedId);
-    fetch(`/api/call-leads/${selectedId}/notes`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.notes) setNotes((n) => ({ ...n, [selectedId]: d.notes })); })
-      .catch(() => notesRequested.current.delete(selectedId));
-  }, [selectedId]);
+    loadHistory(selectedId).then((d) => { if (!d) notesRequested.current.delete(selectedId); });
+  }, [selectedId, loadHistory]);
+
+  // After dialling, look for the finished call every few seconds (and when he comes back to this tab)
+  useEffect(() => {
+    if (!watching) return;
+    const started = Date.now();
+    let stopped = false;
+    const check = async () => {
+      if (stopped) return;
+      if (Date.now() - started > 10 * 60_000) { setWatching(null); return; }
+      const d = await loadHistory(watching);
+      if (stopped || !d?.calls || d.calls.length <= callBaseline.current) return;
+      setWatching(null);
+      say(`Call logged: ${describeCall(d.calls[0])}`);
+    };
+    const timer = setInterval(check, 5000);
+    const onFocus = () => { void check(); };
+    window.addEventListener("focus", onFocus);
+    return () => { stopped = true; clearInterval(timer); window.removeEventListener("focus", onFocus); };
+  }, [watching, loadHistory, say]);
 
   useEffect(() => () => { clearTimeout(toastTimer.current); clearTimeout(copiedTimer.current); }, []);
 
@@ -201,17 +235,28 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
     }
   }, [say]);
 
+  /** Open JustCall's dialer with this lead's number, tagged with the lead so the call finds its way back here. */
+  const dial = useCallback((l: CallLead) => {
+    const { copy } = parsePhone(l.phone);
+    if (!copy) { say("This lead has no number to dial.", "error"); return; }
+    if (!openDialer(copy, l.id)) { say("Your browser blocked the dialer window. Allow pop-ups for this site and try again.", "error"); return; }
+    callBaseline.current = calls[l.id]?.length ?? 0;
+    setWatching(l.id);
+    say("Dialer opened. The call shows up here when it ends.");
+  }, [calls, say]);
+
   // "C" copies the number when you're not typing in a box
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== "c" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if ((key !== "c" && !(key === "d" && JUSTCALL_DIALER_ENABLED)) || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
-      if (lead) { e.preventDefault(); copyNumber(lead); }
+      if (lead) { e.preventDefault(); if (key === "c") copyNumber(lead); else dial(lead); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [lead, copyNumber]);
+  }, [lead, copyNumber, dial]);
 
   /** Send a note or call outcome. Resolves true on success so the form can close. */
   const submit = useCallback(async (
@@ -407,6 +452,8 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
               key={lead.id}
               lead={lead}
               history={notes[lead.id]}
+              calls={calls[lead.id]}
+              onDial={JUSTCALL_DIALER_ENABLED ? () => dial(lead) : undefined}
               draft={drafts[lead.id] ?? ""}
               onDraft={(v) => setDrafts((d) => ({ ...d, [lead.id]: v }))}
               busy={busy}
@@ -498,10 +545,14 @@ function StatTile({ label, value, gold }: { label: string; value: number; gold?:
 type Panel = null | "callback" | "booked";
 
 function LeadDetail({
-  lead, history, draft, onDraft, busy, copied, onCopy, onSubmit, onDelete, canType,
+  lead, history, calls, onDial, draft, onDraft, busy, copied, onCopy, onSubmit, onDelete, canType,
 }: {
   lead: CallLead;
   history: CallLeadNote[] | undefined;
+  /** JustCall calls on this lead. */
+  calls: CallActivity[] | undefined;
+  /** Present when the JustCall dialer is switched on. */
+  onDial?: () => void;
   draft: string;
   onDraft: (v: string) => void;
   busy: Outcome | "delete" | null;
@@ -520,6 +571,27 @@ function LeadDetail({
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
+  // He just made a call but hasn't logged how it went: nudge (45 minutes, then it's old news)
+  const awaitingResult = useMemo(() => {
+    if (!now) return null;
+    const last = (calls ?? []).find((c) => c.direction === "outgoing" && c.started_at);
+    if (!last?.started_at) return null;
+    const at = Date.parse(last.started_at);
+    if (Number.isNaN(at) || now.getTime() - at > 45 * 60_000) return null;
+    const logged = lead.last_called_at ? Date.parse(lead.last_called_at) : 0;
+    return at > logged ? last : null;
+  }, [calls, now, lead.last_called_at]);
+
+  // Notes and calls on one timeline, newest first
+  const timeline = useMemo(() => {
+    type Item = { kind: "note"; at: number; note: CallLeadNote } | { kind: "call"; at: number; call: CallActivity };
+    const items: Item[] = [
+      ...(history ?? []).map((note): Item => ({ kind: "note", at: Date.parse(note.occurred_at), note })),
+      ...(calls ?? []).map((call): Item => ({ kind: "call", at: Date.parse(call.started_at ?? call.created_at), call })),
+    ];
+    return items.sort((a, b) => (b.at || 0) - (a.at || 0));
+  }, [history, calls]);
+
   const clinic = useMemo(() => (now ? clinicTime({ address: lead.address, phone: lead.phone }, now) : null), [now, lead.address, lead.phone]);
   const site = safeUrl(lead.website);
   const maps = safeUrl(lead.google_maps_url);
@@ -566,27 +638,48 @@ function LeadDetail({
           </p>
         )}
 
-        <button
-          type="button"
-          onClick={onCopy}
-          disabled={!phone.copy}
-          title="Copy this number for the dialer (shortcut: C)"
+        <div
           className={cn(
-            "group mt-4 flex w-full items-center justify-between gap-3 rounded-xl border-2 px-5 py-4 text-left transition-all active:scale-[0.99]",
-            copied ? "border-emerald-500 bg-emerald-500/10" : "border-primary/30 bg-primary/5 hover:border-primary hover:bg-primary/10",
+            "mt-4 flex w-full flex-wrap items-center justify-between gap-3 rounded-xl border-2 px-5 py-4 transition-all",
+            copied ? "border-emerald-500 bg-emerald-500/10" : "border-primary/30 bg-primary/5",
           )}
         >
-          <span>
+          <button
+            type="button"
+            onClick={onCopy}
+            disabled={!phone.copy}
+            title="Copy this number for the dialer (shortcut: C)"
+            className="min-w-0 text-left"
+          >
             <span className="block font-mono text-3xl font-bold tracking-tight tabular-nums">{phone.display || "No number"}</span>
             <span className="mt-0.5 block text-xs text-muted-foreground">
               {copied ? `Copied ${phone.copy}` : phone.ok ? `Click to copy ${phone.copy}` : "Click to copy as typed"}
             </span>
-          </span>
-          <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold", copied ? "bg-emerald-600 text-white" : "bg-primary text-primary-foreground")}>
-            {copied ? <Check size={15} /> : <Copy size={15} />}
-            {copied ? "Copied" : "Copy"}
-          </span>
-        </button>
+          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {onDial && (
+              <button
+                type="button"
+                onClick={onDial}
+                disabled={!phone.copy}
+                title="Open JustCall and dial this number (shortcut: D)"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 active:scale-[0.96] disabled:opacity-50"
+              >
+                <PhoneCall size={15} /> Call
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onCopy}
+              disabled={!phone.copy}
+              title="Copy this number for the dialer (shortcut: C)"
+              className={cn("inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-all active:scale-[0.96]", copied ? "bg-emerald-600 text-white" : onDial ? "border bg-background text-foreground hover:bg-muted/40" : "bg-primary text-primary-foreground")}
+            >
+              {copied ? <Check size={15} /> : <Copy size={15} />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </div>
         {clinic && (
           <p
             className={cn(
@@ -655,6 +748,13 @@ function LeadDetail({
 
       {/* Notes + outcome */}
       <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
+        {awaitingResult && (
+          <p className="mb-3 flex items-center gap-2 rounded-lg bg-amber-500/15 px-3 py-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
+            <PhoneOutgoing size={14} />
+            You called {formatSydney(awaitingResult.started_at)}
+            {awaitingResult.conversation_seconds ? ` (${formatDuration(awaitingResult.conversation_seconds)})` : ""}. Log how it went below.
+          </p>
+        )}
         <label htmlFor="call-notes" className="mb-1.5 block text-xs font-semibold text-foreground/80">
           Call notes
         </label>
@@ -759,20 +859,44 @@ function LeadDetail({
         <h3 className="mb-3 text-sm font-semibold">History</h3>
         {!history ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : history.length === 0 ? (
+        ) : timeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">No calls or notes yet. Anything you log shows up here.</p>
         ) : (
           <ol className="space-y-3">
-            {history.map((n) => (
-              <li key={n.id} className="border-l-2 border-primary/20 pl-3">
-                <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                  <span className="rounded-full bg-muted px-2 py-0.5 font-bold text-foreground/80">{OUTCOME_LABEL[n.outcome]}</span>
-                  <span>{formatSydney(n.occurred_at)}</span>
-                  <span>· {actorDisplayName(n.actor as Actor, n.created_by)}</span>
-                </div>
-                {n.body && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{n.body}</p>}
-              </li>
-            ))}
+            {timeline.map((item) => {
+              if (item.kind === "note") {
+                const n = item.note;
+                return (
+                  <li key={`n-${n.id}`} className="border-l-2 border-primary/20 pl-3">
+                    <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-bold text-foreground/80">{OUTCOME_LABEL[n.outcome]}</span>
+                      <span>{formatSydney(n.occurred_at)}</span>
+                      <span>· {actorDisplayName(n.actor as Actor, n.created_by)}</span>
+                    </div>
+                    {n.body && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{n.body}</p>}
+                  </li>
+                );
+              }
+              const c = item.call;
+              const Icon = c.direction === "incoming" ? (c.call_type === "missed" ? PhoneMissed : PhoneIncoming) : PhoneOutgoing;
+              return (
+                <li key={`c-${c.id}`} className="border-l-2 border-sky-500/40 pl-3">
+                  <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 font-bold text-sky-700 dark:text-sky-300">
+                      <Icon size={11} /> {describeCall(c)}
+                    </span>
+                    <span>{formatSydney(c.started_at ?? c.created_at)}</span>
+                    {c.agent_name && <span>· {c.agent_name}</span>}
+                  </div>
+                  {c.disposition && <p className="mt-1 text-xs"><span className="font-semibold">JustCall result:</span> {c.disposition}</p>}
+                  {c.notes && <p className="mt-0.5 whitespace-pre-wrap break-words text-sm">{c.notes}</p>}
+                  {c.voicemail_text && <p className="mt-1 rounded bg-muted px-2 py-1 text-xs italic">&ldquo;{c.voicemail_text}&rdquo;</p>}
+                  {c.recording_url && (
+                    <audio controls preload="none" src={`/api/justcall/recording/${c.id}`} className="mt-1.5 h-8 w-full max-w-sm" />
+                  )}
+                </li>
+              );
+            })}
           </ol>
         )}
       </div>
