@@ -4,7 +4,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { formatSydney } from "@/lib/hq/sydney-time";
 import { Check, Circle, Copy } from "lucide-react";
-import type { JustCallStatus } from "@/lib/hq/justcall-events";
+import type { DialSheetStatus } from "@/lib/hq/dialsheet-events";
 
 const OUTCOME_STYLE: Record<string, string> = {
   processed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
@@ -22,7 +22,7 @@ const OUTCOME_HELP: Record<string, string> = {
   error:     "Couldn't save",
 };
 
-export function JustCallStatusView({ status, webhookUrl }: { status: JustCallStatus; webhookUrl: string }) {
+export function DialSheetStatusView({ status, webhookUrl }: { status: DialSheetStatus; webhookUrl: string }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -34,36 +34,22 @@ export function JustCallStatusView({ status, webhookUrl }: { status: JustCallSta
       done: !status.setupNeeded,
       title: "Database is ready",
       body: status.setupNeeded
-        ? "Run the JustCall migration (20261020120000_add_justcall.sql) in the Supabase SQL editor."
+        ? "Run the DialSheet migration (20261023120000_add_dialsheet.sql) in the Supabase SQL editor."
         : "The call log tables exist.",
     },
     {
       done: status.secretConfigured,
-      title: "API secret is set",
+      title: "Signing secret is set",
       body: status.secretConfigured
-        ? "JUSTCALL_API_SECRET is set, so incoming calls can be checked as genuinely from JustCall."
-        : "Add JUSTCALL_API_SECRET in Vercel (JustCall > APIs and Webhooks > API Keys), then redeploy.",
-    },
-    {
-      done: status.dialerEnabled,
-      title: "Call buttons are on",
-      body: status.dialerEnabled
-        ? "NEXT_PUBLIC_JUSTCALL_DIALER is on, so Jan sees a Call button on every lead."
-        : "Add NEXT_PUBLIC_JUSTCALL_DIALER=true in Vercel and redeploy to show the Call button.",
+        ? "DIALSHEET_WEBHOOK_SECRET is set, so incoming calls can be checked as genuinely from DialSheet."
+        : "Copy the webhook's signing secret (it starts with whsec_) from DialSheet into Vercel as DIALSHEET_WEBHOOK_SECRET, then redeploy.",
     },
     {
       done: !!status.lastEventAt,
-      title: "JustCall is sending calls",
+      title: "DialSheet is sending calls",
       body: status.lastEventAt
-        ? `Last message from JustCall: ${formatSydney(status.lastEventAt)}.`
-        : "Nothing received yet. Add the webhook below in JustCall, then make a test call.",
-    },
-    {
-      done: status.apiKeyConfigured,
-      title: "Recordings play inside the CRM (optional)",
-      body: status.apiKeyConfigured
-        ? "JUSTCALL_API_KEY is set, so call recordings play on the lead."
-        : "Add JUSTCALL_API_KEY in Vercel to play recordings on the lead. Without it, recordings open from JustCall's own link.",
+        ? `Last message from DialSheet: ${formatSydney(status.lastEventAt)}.`
+        : "Nothing received yet. Add the webhook below, then press Send test on it in DialSheet.",
     },
   ];
 
@@ -89,8 +75,8 @@ export function JustCallStatusView({ status, webhookUrl }: { status: JustCallSta
       <section className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
         <h2 className="text-sm font-semibold">Webhook address</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          In JustCall go to <b>APIs and Webhooks &rsaquo; Webhook Settings</b>, add a webhook with this address, and tick <b>Call completed</b> and <b>Call updated</b>{" "}
-          (plus the Sales Dialer versions if you use that). Webhooks need JustCall&apos;s <b>Team plan or above</b>.
+          In DialSheet go to <b>Settings &rsaquo; Webhooks</b> and add this address. Webhooks are on DialSheet&apos;s <b>Pro plan</b>.
+          Add it from <b>Jan&apos;s own DialSheet account</b>: a webhook only sends the calls of the person who added it.
         </p>
         <button
           type="button"
@@ -102,8 +88,19 @@ export function JustCallStatusView({ status, webhookUrl }: { status: JustCallSta
             {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? "Copied" : "Copy"}
           </span>
         </button>
-        <p className="mt-3 text-xs text-muted-foreground">
-          Jan needs to be signed in to JustCall in the same browser, with pop-ups allowed for this site. His JustCall agent email should match his CRM email so calls show his name.
+        <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+          <li>If more than one person has a webhook, put each one&apos;s signing secret in <code>DIALSHEET_WEBHOOK_SECRET</code>, separated by commas.</li>
+          <li>Calls show up on the lead a couple of minutes after they end. Answered calls can take up to 20 minutes, because DialSheet waits for its AI summary.</li>
+          <li>A call is matched to a lead by phone number, so Jan&apos;s DialSheet leads need the same numbers as the Call List. Calls to 1300/1800 numbers can&apos;t be matched and are kept as unmatched.</li>
+          <li>Logging an outcome in DialSheet doesn&apos;t change the lead here. Jan still presses the result button on the Call List, which is what the scoreboard counts.</li>
+        </ul>
+      </section>
+
+      <section className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5">
+        <h2 className="text-sm font-semibold">Recording and consent</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          DialSheet records calls by default (Settings &rsaquo; Privacy &rsaquo; <b>Record calls</b>) and its docs don&apos;t mention announcing that to the person called.
+          In Australia, recording a call generally needs everyone on it to know. Either switch recording off, or have Jan&apos;s script say the call is recorded.
         </p>
       </section>
 
@@ -113,7 +110,7 @@ export function JustCallStatusView({ status, webhookUrl }: { status: JustCallSta
           <span className="text-xs text-muted-foreground">{status.calls24h} call{status.calls24h === 1 ? "" : "s"} logged in the last 24 hours</span>
         </div>
         {status.events.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">Nothing yet. Once JustCall is connected, every message it sends shows up here.</p>
+          <p className="mt-3 text-sm text-muted-foreground">Nothing yet. Once DialSheet is connected, every message it sends shows up here.</p>
         ) : (
           <ul className="mt-3 divide-y">
             {status.events.map((e) => (

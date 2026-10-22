@@ -18,8 +18,8 @@ const PUBLIC_PATHS = [
   // /api/jobs/:id/complete is the n8n callback (x-ivory-key header auth).
   // The sibling GET /api/jobs/:id does its own session check in-route.
   "/api/jobs",
-  // JustCall webhook: not signed in; every request is verified with the JustCall API secret in-route.
-  "/api/justcall/webhook",
+  // DialSheet webhook: not signed in; every request is verified against the webhook's signing secret in-route.
+  "/api/dialsheet/webhook",
   // Client portal — the unguessable portal_token IS the access control,
   // not a session (see src/app/client/[token]/page.tsx).
   "/client",
@@ -53,7 +53,7 @@ const CONCIERGE_BLOCKED = [
   "/client-portals",    // internal management page — NOT the /client/[token] portal itself
   "/call-list",         // scraped lead data + caller notes
   "/api/call-leads",    // this host skips session checks, so wall it off entirely
-  "/api/justcall",      // call data and recordings; this host skips session checks
+  "/api/dialsheet",     // call data; this host skips session checks
   "/api/invoices",      // financial data; this host skips session checks, so wall it off entirely
   "/client",            // the client-report portal is a separate product surface, not for this host
   "/login",

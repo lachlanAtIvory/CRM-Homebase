@@ -1,19 +1,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseEvent, timestampFresh, verifySignature, type CallRecord } from "./justcall";
+import { checkSignature, parseEvent, secretsFrom, type CallRecord } from "./dialsheet";
 
 /**
- * Receiving JustCall webhooks.
+ * Receiving DialSheet webhooks.
  *
- *   JustCall -> POST /api/justcall/webhook -> handleWebhook -> call_activity
+ *   DialSheet -> POST /api/dialsheet/webhook -> handleWebhook -> call_activity
  *
  * Rules:
- *  - Verify the signature first. Nothing is written for an unsigned or stale request.
- *  - Answer 200 quickly for anything valid (including events we don't use), because
- *    JustCall only retries on 429 / 5xx. A database failure answers 500 so it retries.
- *  - JustCall can send the same event twice, or `call.updated` before `call.completed`,
- *    so a call is merged into whatever we already have, never blindly overwritten.
- *  - A call is attached to a lead by the lead id we put on the dialer link, else by the
- *    number that was called (the newest lead with that number).
+ *  - Verify the signature first. Nothing is written for an unsigned request.
+ *  - DialSheet only sends `call.completed`, once per call, a couple of minutes after the call ends
+ *    (up to 20 minutes for answered calls, which wait for the AI summary).
+ *  - Answer 2xx for anything valid (including events we don't use). Anything else is retried, and an
+ *    endpoint that fails every retry on 10 calls in a row is switched off by DialSheet, so a request
+ *    we refuse for a good reason (bad signature) is the only 4xx, and a database failure answers 500.
+ *  - Delivery is "at least once and not in order", so a call is merged into whatever we already have.
+ *  - A call is attached to a lead by its phone number. DialSheet has no way to carry our lead id
+ *    through a call, so when several leads share a number the one whose business name matches wins,
+ *    else the one touched most recently.
  */
 
 export type WebhookResult = { status: number; json: Record<string, unknown> };
@@ -25,27 +28,22 @@ type Row = Record<string, unknown>;
 /** What goes into call_activity for a call. */
 function toRow(c: CallRecord, leadId: string | null): Row {
   return {
-    provider: "justcall",
+    provider: "dialsheet",
     provider_call_id: c.providerCallId,
-    call_sid: c.callSid,
     lead_id: leadId,
-    source: c.source,
+    source: "dialsheet",
     direction: c.direction,
     call_type: c.callType,
     raw_type: c.rawType,
     contact_number: c.contactNumber,
     contact_e164: c.contactE164,
-    justcall_number: c.justcallNumber,
-    agent_email: c.agentEmail,
-    agent_name: c.agentName,
     started_at: c.startedAt,
     duration_seconds: c.durationSeconds,
-    conversation_seconds: c.conversationSeconds,
     disposition: c.disposition,
     notes: c.notes,
-    rating: c.rating,
+    summary: c.summary,
+    next_steps: c.nextSteps,
     recording_url: c.recordingUrl,
-    voicemail_text: c.voicemailText,
   };
 }
 
@@ -59,45 +57,40 @@ export function mergeRows(existing: Row | null, incoming: Row): Row {
   return out;
 }
 
-async function findLead(admin: SupabaseClient, hint: string | null, e164: string | null): Promise<string | null> {
-  if (hint) {
-    const { data } = await admin.from("call_leads").select("id").eq("id", hint).maybeSingle();
-    if (data?.id) return data.id as string;
-  }
-  if (e164) {
-    const { data } = await admin
-      .from("call_leads")
-      .select("id")
-      .eq("phone_e164", e164)
-      .order("updated_at", { ascending: false })
-      .limit(1);
-    if (data?.[0]?.id) return data[0].id as string;
-  }
-  return null;
+const plain = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/** The lead a call is for: same number, preferring the one whose business name matches, else the newest. */
+async function findLead(admin: SupabaseClient, e164: string | null, names: string[]): Promise<string | null> {
+  if (!e164) return null;
+  const { data } = await admin
+    .from("call_leads")
+    .select("id, business_name")
+    .eq("phone_e164", e164)
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  const rows = (data ?? []) as { id: string; business_name: string | null }[];
+  if (rows.length === 0) return null;
+  const wanted = names.map(plain).filter(Boolean);
+  const named = wanted.length ? rows.find((r) => wanted.includes(plain(r.business_name))) : undefined;
+  return (named ?? rows[0]).id;
 }
 
 async function log(
   admin: SupabaseClient,
   entry: { event_type?: string | null; provider_call_id?: string | null; outcome: "processed" | "unmatched" | "ignored" | "rejected" | "error"; lead_id?: string | null; detail?: string | null },
 ) {
-  try { await admin.from("justcall_events").insert(entry); } catch { /* the log is for troubleshooting only */ }
+  try { await admin.from("dialsheet_events").insert(entry); } catch { /* the log is for troubleshooting only */ }
 }
 
-/** Save a completed or updated call. Throws on a database failure so the caller can answer 500. */
+/** Save a finished call. Throws on a database failure so the caller can answer 500. */
 export async function recordCall(admin: SupabaseClient, call: CallRecord): Promise<{ id: string; leadId: string | null; created: boolean }> {
-  let { data: existing, error } = await admin.from("call_activity").select("*").eq("provider", "justcall").eq("provider_call_id", call.providerCallId).maybeSingle();
+  const { data: existing, error } = await admin.from("call_activity").select("*").eq("provider", "dialsheet").eq("provider_call_id", call.providerCallId).maybeSingle();
   if (error) throw new Error(error.message);
-  if (!existing && call.callSid) {
-    ({ data: existing, error } = await admin.from("call_activity").select("*").eq("provider", "justcall").eq("call_sid", call.callSid).maybeSingle());
-    if (error) throw new Error(error.message);
-  }
 
   const merged = mergeRows((existing as Row | null) ?? null, toRow(call, null));
   let leadId = (existing?.lead_id as string | null | undefined) ?? null;
-  if (!leadId) leadId = await findLead(admin, call.leadIdHint, (merged.contact_e164 as string | null) ?? call.contactE164);
+  if (!leadId) leadId = await findLead(admin, (merged.contact_e164 as string | null) ?? call.contactE164, call.leadNames);
   merged.lead_id = leadId;
-  // Keep the id we first stored this call under, so later events keep finding the same row.
-  if (existing) merged.provider_call_id = existing.provider_call_id;
 
   if (existing) {
     const { id: _id, created_at: _c, updated_at: _u, ...patch } = merged;
@@ -110,12 +103,20 @@ export async function recordCall(admin: SupabaseClient, call: CallRecord): Promi
   return { id: made.id as string, leadId, created: true };
 }
 
+const WHY_REJECTED: Record<string, string> = {
+  missing: "No signature header (not from DialSheet, or the secret isn't being sent).",
+  malformed: "The signature header wasn't in the expected form.",
+  mismatch: "Signature didn't match: the signing secret in Vercel isn't this webhook's secret, or the request isn't from DialSheet.",
+  stale: "The signature was too old.",
+};
+
 export async function handleWebhook(
   admin: SupabaseClient,
   input: {
     rawBody: string;
-    headers: { signature?: string | null; version?: string | null; timestamp?: string | null };
-    /** The account's API secret (JUSTCALL_API_SECRET). */
+    /** The X-DialSheet-Signature header. */
+    signature: string | null | undefined;
+    /** DIALSHEET_WEBHOOK_SECRET: the webhook's signing secret (several may be listed). */
     secret: string | undefined;
     now?: number;
   },
@@ -128,28 +129,27 @@ export async function handleWebhook(
     return reply(400, { error: "Body must be valid JSON" });
   }
 
-  if (!input.secret) {
-    return reply(503, { error: "JustCall isn't set up on this CRM yet (JUSTCALL_API_SECRET is missing)." });
+  const secrets = secretsFrom(input.secret);
+  if (secrets.length === 0) {
+    return reply(503, { error: "DialSheet isn't set up on this CRM yet (DIALSHEET_WEBHOOK_SECRET is missing)." });
   }
 
-  const webhookUrl = typeof body.webhook_url === "string" ? body.webhook_url : "";
-  const type = typeof body.type === "string" ? body.type : "";
-  const { signature, version, timestamp } = input.headers;
-
-  const authentic =
-    !!webhookUrl && !!type && !!signature && !!timestamp &&
-    (!version || version === "v1") &&
-    verifySignature({ secret: input.secret, webhookUrl, type, timestamp, signature }) &&
-    timestampFresh(timestamp, input.now);
-  if (!authentic) {
-    await log(admin, { event_type: type || null, outcome: "rejected", detail: "Signature didn't match (wrong API secret, or not from JustCall)." });
+  const check = checkSignature({ secrets, header: input.signature, rawBody: input.rawBody, now: input.now });
+  if (!check.ok) {
+    await log(admin, { event_type: typeof body.type === "string" ? body.type : null, outcome: "rejected", detail: WHY_REJECTED[check.reason] });
     return reply(401, { error: "Signature check failed." });
   }
 
   const event = parseEvent(body);
-  if (!event) return reply(400, { error: "Not a JustCall event." });
-  if (event.kind === "validation") return reply(200, { ok: true, validated: true });
-  if (event.kind === "ignore") return reply(200, { ok: true, ignored: event.type });
+  if (!event) return reply(400, { error: "Not a DialSheet event." });
+  if (event.kind === "test") {
+    await log(admin, { event_type: "call.completed", outcome: "ignored", detail: "Test event from DialSheet. Nothing was saved." });
+    return reply(200, { ok: true, test: true });
+  }
+  if (event.kind === "ignore") {
+    await log(admin, { event_type: event.type, outcome: "ignored", detail: event.why ?? "An event the CRM doesn't use." });
+    return reply(200, { ok: true, ignored: event.type });
+  }
 
   try {
     const saved = await recordCall(admin, event.call);
@@ -163,7 +163,7 @@ export async function handleWebhook(
     return reply(200, { ok: true, call: saved.id, matched: !!saved.leadId });
   } catch (e) {
     await log(admin, { event_type: event.type, provider_call_id: event.call.providerCallId, outcome: "error", detail: e instanceof Error ? e.message : "unknown error" });
-    return reply(500, { error: "Couldn't save the call. JustCall will retry." });
+    return reply(500, { error: "Couldn't save the call. DialSheet will retry." });
   }
 }
 
@@ -176,20 +176,18 @@ export type CallActivity = {
   call_type: "answered" | "unanswered" | "missed" | "voicemail" | "failed" | "other" | null;
   started_at: string | null;
   duration_seconds: number | null;
-  conversation_seconds: number | null;
-  agent_name: string | null;
-  agent_email: string | null;
   disposition: string | null;
   notes: string | null;
+  summary: string | null;
+  next_steps: string | null;
   recording_url: string | null;
-  voicemail_text: string | null;
   created_at: string;
 };
 
 const ACTIVITY_COLUMNS =
-  "id, lead_id, direction, call_type, started_at, duration_seconds, conversation_seconds, agent_name, agent_email, disposition, notes, recording_url, voicemail_text, created_at";
+  "id, lead_id, direction, call_type, started_at, duration_seconds, disposition, notes, summary, next_steps, recording_url, created_at";
 
-/** A lead's JustCall calls, newest first. Empty (not an error) before the JustCall migration is run. */
+/** A lead's calls, newest first. Empty (not an error) before the DialSheet migration is run. */
 export async function fetchLeadCalls(supabase: SupabaseClient, leadId: string): Promise<CallActivity[]> {
   const { data, error } = await supabase
     .from("call_activity")
@@ -201,39 +199,33 @@ export async function fetchLeadCalls(supabase: SupabaseClient, leadId: string): 
   return (data ?? []) as CallActivity[];
 }
 
-export type JustCallStatus = {
-  /** The Call buttons are switched on (NEXT_PUBLIC_JUSTCALL_DIALER). */
-  dialerEnabled: boolean;
-  /** JUSTCALL_API_SECRET is set, so webhooks can be verified. */
+export type DialSheetStatus = {
+  /** DIALSHEET_WEBHOOK_SECRET is set, so webhooks can be verified. */
   secretConfigured: boolean;
-  /** JUSTCALL_API_KEY is set, so recordings can be streamed through the CRM. */
-  apiKeyConfigured: boolean;
   setupNeeded: boolean;
   calls24h: number;
+  /** The last time DialSheet reached us with a request we accepted (a real call or its "Send test"). */
   lastEventAt: string | null;
   events: { id: string; received_at: string; event_type: string | null; outcome: string; detail: string | null }[];
 };
 
-export async function loadJustCallStatus(admin: SupabaseClient, env: NodeJS.ProcessEnv = process.env, now = new Date()): Promise<JustCallStatus> {
-  const base = {
-    dialerEnabled: env.NEXT_PUBLIC_JUSTCALL_DIALER === "true",
-    secretConfigured: !!env.JUSTCALL_API_SECRET,
-    apiKeyConfigured: !!env.JUSTCALL_API_KEY && !!env.JUSTCALL_API_SECRET,
-  };
+export async function loadDialSheetStatus(admin: SupabaseClient, env: NodeJS.ProcessEnv = process.env, now = new Date()): Promise<DialSheetStatus> {
+  const secretConfigured = secretsFrom(env.DIALSHEET_WEBHOOK_SECRET).length > 0;
   const { data: events, error } = await admin
-    .from("justcall_events")
+    .from("dialsheet_events")
     .select("id, received_at, event_type, outcome, detail")
     .order("received_at", { ascending: false })
     .limit(15);
-  if (error) return { ...base, setupNeeded: true, calls24h: 0, lastEventAt: null, events: [] };
+  if (error) return { secretConfigured, setupNeeded: true, calls24h: 0, lastEventAt: null, events: [] };
 
   const since = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
   const { data: recent } = await admin.from("call_activity").select("id").gte("created_at", since).limit(1000);
+  const list = (events ?? []) as DialSheetStatus["events"];
   return {
-    ...base,
+    secretConfigured,
     setupNeeded: false,
     calls24h: recent?.length ?? 0,
-    lastEventAt: (events?.[0]?.received_at as string | undefined) ?? null,
-    events: (events ?? []) as JustCallStatus["events"],
+    lastEventAt: list.find((e) => e.outcome !== "rejected")?.received_at ?? null,
+    events: list,
   };
 }

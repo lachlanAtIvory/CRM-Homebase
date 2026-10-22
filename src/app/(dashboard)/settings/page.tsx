@@ -55,16 +55,16 @@ export default async function SettingsPage() {
 
       {isManager && (
         <Link
-          href="/settings/justcall"
+          href="/settings/dialsheet"
           className="group flex items-center gap-4 rounded-xl border bg-card p-5 ring-1 ring-foreground/5 transition-all hover:border-primary/50 hover:shadow-sm"
         >
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
             <PhoneCall size={18} />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">JustCall</span>
+            <span className="block text-sm font-semibold">DialSheet</span>
             <span className="block text-xs text-muted-foreground">
-              Click-to-dial from the Call List, with every call logged on its lead. Check the connection and see what JustCall has sent.
+              Every call Jan makes in DialSheet is logged on its lead here. Check the connection and see what DialSheet has sent.
             </span>
           </span>
           <span className="text-xs font-semibold text-primary group-hover:underline">Manage</span>

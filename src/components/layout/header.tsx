@@ -37,7 +37,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/settings":         "Settings",
   "/settings/team":    "Team Access",
   "/settings/availability": "Call Availability",
-  "/settings/justcall": "JustCall",
+  "/settings/dialsheet": "DialSheet",
   "/no-access":        "Agent Ivory CRM",
   "/application/new":  "Launch Application",
 };

@@ -11,9 +11,8 @@ import { parsePhone } from "@/lib/hq/phone";
 import { WEBSITE_FROM_KEY } from "@/lib/hq/website-guess";
 import { clinicClockForSlot, clinicTime } from "@/lib/hq/clinic-time";
 import { PERSON_LABEL } from "@/lib/hq/availability";
-import { describeCall, formatDuration } from "@/lib/hq/justcall-format";
-import { JUSTCALL_DIALER_ENABLED, openDialer } from "@/lib/hq/justcall-dial";
-import type { CallActivity } from "@/lib/hq/justcall-events";
+import { describeCall, formatDuration } from "@/lib/hq/call-format";
+import type { CallActivity } from "@/lib/hq/dialsheet-events";
 import { SlotPicker, type Picked } from "./slot-picker";
 import {
   formatSydney, formatViewerLocal, quickTimes, sydneyWallToISO, viewerIsOnSydneyTime,
@@ -22,7 +21,7 @@ import type { MotivationStats } from "@/lib/hq/motivation-stats";
 import { actorDisplayName, type Actor } from "@/lib/hq/motivation-stats";
 import {
   Bell, Ban, CalendarCheck, CalendarClock, Check, Clock, Copy, ExternalLink, Globe, Loader2, Mail,
-  MapPin, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Search, Star, ThumbsDown, Trash2, Upload, Voicemail, X, XCircle,
+  MapPin, PhoneIncoming, PhoneMissed, PhoneOutgoing, Search, Star, ThumbsDown, Trash2, Upload, Voicemail, X, XCircle,
 } from "lucide-react";
 
 export type CallListInitial = {
@@ -100,7 +99,6 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
   const [busy, setBusy] = useState<Outcome | "delete" | null>(null);
   const [notes, setNotes] = useState<Record<string, CallLeadNote[]>>({});
   const [calls, setCalls] = useState<Record<string, CallActivity[]>>({});
-  const [watching, setWatching] = useState<string | null>(null);   // a lead we just dialled: waiting for its call to land
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -110,7 +108,6 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const notesRequested = useRef(new Set<string>());
-  const callBaseline = useRef(0);
   const live = useRef({ tab, q: debouncedQ, selectedId, busy });
   live.current = { tab, q: debouncedQ, selectedId, busy };
 
@@ -183,7 +180,7 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
     return () => clearInterval(t);
   }, [load]);
 
-  /** Load a lead's notes and JustCall calls. */
+  /** Load a lead's notes and the calls DialSheet logged on it. */
   const loadHistory = useCallback(async (leadId: string) => {
     try {
       const r = await fetch(`/api/call-leads/${leadId}/notes`);
@@ -202,24 +199,14 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
     loadHistory(selectedId).then((d) => { if (!d) notesRequested.current.delete(selectedId); });
   }, [selectedId, loadHistory]);
 
-  // After dialling, look for the finished call every few seconds (and when he comes back to this tab)
+  // DialSheet reports a call a couple of minutes after it ends, usually while Jan is on the next one:
+  // when he comes back to this tab, refresh the selected lead's calls so a new one shows up.
   useEffect(() => {
-    if (!watching) return;
-    const started = Date.now();
-    let stopped = false;
-    const check = async () => {
-      if (stopped) return;
-      if (Date.now() - started > 10 * 60_000) { setWatching(null); return; }
-      const d = await loadHistory(watching);
-      if (stopped || !d?.calls || d.calls.length <= callBaseline.current) return;
-      setWatching(null);
-      say(`Call logged: ${describeCall(d.calls[0])}`);
-    };
-    const timer = setInterval(check, 5000);
-    const onFocus = () => { void check(); };
+    if (!selectedId) return;
+    const onFocus = () => { void loadHistory(selectedId); };
     window.addEventListener("focus", onFocus);
-    return () => { stopped = true; clearInterval(timer); window.removeEventListener("focus", onFocus); };
-  }, [watching, loadHistory, say]);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [selectedId, loadHistory]);
 
   useEffect(() => () => { clearTimeout(toastTimer.current); clearTimeout(copiedTimer.current); }, []);
 
@@ -235,28 +222,17 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
     }
   }, [say]);
 
-  /** Open JustCall's dialer with this lead's number, tagged with the lead so the call finds its way back here. */
-  const dial = useCallback((l: CallLead) => {
-    const { copy } = parsePhone(l.phone);
-    if (!copy) { say("This lead has no number to dial.", "error"); return; }
-    if (!openDialer(copy, l.id)) { say("Your browser blocked the dialer window. Allow pop-ups for this site and try again.", "error"); return; }
-    callBaseline.current = calls[l.id]?.length ?? 0;
-    setWatching(l.id);
-    say("Dialer opened. The call shows up here when it ends.");
-  }, [calls, say]);
-
   // "C" copies the number when you're not typing in a box
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase();
-      if ((key !== "c" && !(key === "d" && JUSTCALL_DIALER_ENABLED)) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.toLowerCase() !== "c" || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
-      if (lead) { e.preventDefault(); if (key === "c") copyNumber(lead); else dial(lead); }
+      if (lead) { e.preventDefault(); copyNumber(lead); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [lead, copyNumber, dial]);
+  }, [lead, copyNumber]);
 
   /** Send a note or call outcome. Resolves true on success so the form can close. */
   const submit = useCallback(async (
@@ -453,7 +429,6 @@ export function CallList({ initial, canManage = false }: { initial: CallListInit
               lead={lead}
               history={notes[lead.id]}
               calls={calls[lead.id]}
-              onDial={JUSTCALL_DIALER_ENABLED ? () => dial(lead) : undefined}
               draft={drafts[lead.id] ?? ""}
               onDraft={(v) => setDrafts((d) => ({ ...d, [lead.id]: v }))}
               busy={busy}
@@ -545,14 +520,12 @@ function StatTile({ label, value, gold }: { label: string; value: number; gold?:
 type Panel = null | "callback" | "booked";
 
 function LeadDetail({
-  lead, history, calls, onDial, draft, onDraft, busy, copied, onCopy, onSubmit, onDelete, canType,
+  lead, history, calls, draft, onDraft, busy, copied, onCopy, onSubmit, onDelete, canType,
 }: {
   lead: CallLead;
   history: CallLeadNote[] | undefined;
-  /** JustCall calls on this lead. */
+  /** Calls logged on this lead by DialSheet. */
   calls: CallActivity[] | undefined;
-  /** Present when the JustCall dialer is switched on. */
-  onDial?: () => void;
   draft: string;
   onDraft: (v: string) => void;
   busy: Outcome | "delete" | null;
@@ -638,48 +611,27 @@ function LeadDetail({
           </p>
         )}
 
-        <div
+        <button
+          type="button"
+          onClick={onCopy}
+          disabled={!phone.copy}
+          title="Copy this number for the dialer (shortcut: C)"
           className={cn(
-            "mt-4 flex w-full flex-wrap items-center justify-between gap-3 rounded-xl border-2 px-5 py-4 transition-all",
-            copied ? "border-emerald-500 bg-emerald-500/10" : "border-primary/30 bg-primary/5",
+            "group mt-4 flex w-full items-center justify-between gap-3 rounded-xl border-2 px-5 py-4 text-left transition-all active:scale-[0.99]",
+            copied ? "border-emerald-500 bg-emerald-500/10" : "border-primary/30 bg-primary/5 hover:border-primary hover:bg-primary/10",
           )}
         >
-          <button
-            type="button"
-            onClick={onCopy}
-            disabled={!phone.copy}
-            title="Copy this number for the dialer (shortcut: C)"
-            className="min-w-0 text-left"
-          >
+          <span>
             <span className="block font-mono text-3xl font-bold tracking-tight tabular-nums">{phone.display || "No number"}</span>
             <span className="mt-0.5 block text-xs text-muted-foreground">
               {copied ? `Copied ${phone.copy}` : phone.ok ? `Click to copy ${phone.copy}` : "Click to copy as typed"}
             </span>
-          </button>
-          <div className="flex shrink-0 items-center gap-2">
-            {onDial && (
-              <button
-                type="button"
-                onClick={onDial}
-                disabled={!phone.copy}
-                title="Open JustCall and dial this number (shortcut: D)"
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-emerald-700 active:scale-[0.96] disabled:opacity-50"
-              >
-                <PhoneCall size={15} /> Call
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onCopy}
-              disabled={!phone.copy}
-              title="Copy this number for the dialer (shortcut: C)"
-              className={cn("inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-all active:scale-[0.96]", copied ? "bg-emerald-600 text-white" : onDial ? "border bg-background text-foreground hover:bg-muted/40" : "bg-primary text-primary-foreground")}
-            >
-              {copied ? <Check size={15} /> : <Copy size={15} />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </div>
+          </span>
+          <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold", copied ? "bg-emerald-600 text-white" : "bg-primary text-primary-foreground")}>
+            {copied ? <Check size={15} /> : <Copy size={15} />}
+            {copied ? "Copied" : "Copy"}
+          </span>
+        </button>
         {clinic && (
           <p
             className={cn(
@@ -751,8 +703,8 @@ function LeadDetail({
         {awaitingResult && (
           <p className="mb-3 flex items-center gap-2 rounded-lg bg-amber-500/15 px-3 py-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
             <PhoneOutgoing size={14} />
-            You called {formatSydney(awaitingResult.started_at)}
-            {awaitingResult.conversation_seconds ? ` (${formatDuration(awaitingResult.conversation_seconds)})` : ""}. Log how it went below.
+            DialSheet logged a call to this number at {formatSydney(awaitingResult.started_at)}
+            {awaitingResult.call_type === "answered" && awaitingResult.duration_seconds ? ` (${formatDuration(awaitingResult.duration_seconds)})` : ""}. Log how it went below.
           </p>
         )}
         <label htmlFor="call-notes" className="mb-1.5 block text-xs font-semibold text-foreground/80">
@@ -886,13 +838,13 @@ function LeadDetail({
                       <Icon size={11} /> {describeCall(c)}
                     </span>
                     <span>{formatSydney(c.started_at ?? c.created_at)}</span>
-                    {c.agent_name && <span>· {c.agent_name}</span>}
                   </div>
-                  {c.disposition && <p className="mt-1 text-xs"><span className="font-semibold">JustCall result:</span> {c.disposition}</p>}
+                  {c.disposition && <p className="mt-1 text-xs"><span className="font-semibold">DialSheet outcome:</span> {c.disposition}</p>}
                   {c.notes && <p className="mt-0.5 whitespace-pre-wrap break-words text-sm">{c.notes}</p>}
-                  {c.voicemail_text && <p className="mt-1 rounded bg-muted px-2 py-1 text-xs italic">&ldquo;{c.voicemail_text}&rdquo;</p>}
+                  {c.summary && <p className="mt-1 whitespace-pre-wrap break-words rounded bg-muted px-2 py-1 text-xs"><span className="font-semibold">AI summary:</span> {c.summary}</p>}
+                  {c.next_steps && <p className="mt-1 whitespace-pre-wrap break-words text-xs"><span className="font-semibold">Suggested next step:</span> {c.next_steps}</p>}
                   {c.recording_url && (
-                    <audio controls preload="none" src={`/api/justcall/recording/${c.id}`} className="mt-1.5 h-8 w-full max-w-sm" />
+                    <a href={c.recording_url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs font-semibold text-primary hover:underline">Open recording</a>
                   )}
                 </li>
               );

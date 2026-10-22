@@ -274,32 +274,44 @@ try {
   ok("...and re-applying the migration restores the privacy", (await count(JAN, "clients")) === 0 && (await titles(JAN)).length >= 1);
 
   // ═══════════════════════════════════════════════════════════════
-  // Round 3: JustCall call log (call_activity, justcall_events)
+  // Round 3: DialSheet call log (call_activity, dialsheet_events)
   // ═══════════════════════════════════════════════════════════════
-  await db.exec(sql("migrations/20261020120000_add_justcall.sql"));
-  ok("round 3 (JustCall) migration applies on top of the lock", true);
-  await db.exec(sql("migrations/20261020120000_add_justcall.sql"));
-  ok("the JustCall migration is safe to run twice", true);
+  // This database stands in for one where the earlier JustCall version of the migration was already run:
+  // the new migration has to take that table over, not choke on it.
+  await db.exec(readFileSync(`${REPO}/scripts/checks/fixtures/earlier-justcall-migration.sql`, "utf8"));
+  await db.exec(`insert into public.call_activity (provider_call_id, direction, call_type, source) values ('old-jc-1', 'outgoing', 'answered', 'justcall')`);
+  const oldSource = await tryWrite("service", `insert into public.call_activity (provider, provider_call_id, source) values ('dialsheet', 'probe', 'dialsheet')`);
+  ok("(before) the earlier JustCall table refuses a 'dialsheet' source", typeof oldSource === "string" && /check/i.test(oldSource), oldSource);
+
+  await db.exec(sql("migrations/20261023120000_add_dialsheet.sql"));
+  ok("round 3 (DialSheet) migration applies on top of the lock and the earlier JustCall version", true);
+  await db.exec(sql("migrations/20261023120000_add_dialsheet.sql"));
+  ok("the DialSheet migration is safe to run twice", true);
+  ok("the earlier JustCall row survived the upgrade", (await count("service", "call_activity")) === 1);
+  const cols = (await db.query(`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'call_activity'`)).rows.map((r) => r.column_name);
+  ok("the upgrade added the summary and next-steps columns", cols.includes("summary") && cols.includes("next_steps"), cols);
+  ok("...and 'dialsheet' is now an accepted source", (await tryWrite("service", `insert into public.call_activity (provider_call_id) values ('probe-2') returning source`)) === 1 && (await db.query(`select source, provider from public.call_activity where provider_call_id = 'probe-2'`)).rows[0].source === "dialsheet");
+  await db.exec(`delete from public.call_activity where provider_call_id in ('old-jc-1', 'probe-2')`);
 
   await db.exec(`update public.team_members set sections = '{call-list}' where email = '${JAN}'`);
   await db.exec(`update public.team_members set sections = '{tasks,clients}' where email = '${SAM}'`);
   await db.exec(`
-    insert into public.call_activity (provider_call_id, call_sid, lead_id, direction, call_type, contact_e164, agent_email, started_at, duration_seconds, recording_url)
-      select '1001', 'CA1', id, 'outgoing', 'answered', '+61755551234', '${JAN}', now(), 130, 'https://app.justcall.io/rec/1.mp3' from public.call_leads limit 1;
-    insert into public.call_activity (provider_call_id, direction, call_type, contact_e164) values ('1002', 'incoming', 'missed', '+61400000000');
-    insert into public.justcall_events (event_type, provider_call_id, outcome) values ('call.completed', '1001', 'processed');
+    insert into public.call_activity (provider, provider_call_id, lead_id, direction, call_type, contact_e164, started_at, duration_seconds, notes, summary, recording_url)
+      select 'dialsheet', 'c_1001', id, 'outgoing', 'answered', '+61755551234', now(), 184, 'Demo Thursday', 'Wants a demo', 'https://api.twilio.com/rec/1.mp3' from public.call_leads limit 1;
+    insert into public.call_activity (provider, provider_call_id, direction, call_type, contact_e164) values ('dialsheet', 'c_1002', 'outgoing', 'unanswered', '+61400000000');
+    insert into public.dialsheet_events (event_type, provider_call_id, outcome) values ('call.completed', 'c_1001', 'processed');
   `);
 
   ok("JAN (call-list) reads the call log", (await count(JAN, "call_activity")) === 2);
   ok("MANAGER reads the call log", (await count(L, "call_activity")) === 2 && (await count(R, "call_activity")) === 2);
   ok("SAM (tasks + clients, no call list) can't read the call log", (await count(SAM, "call_activity")) === 0);
-  ok("STRANGER, switched-off member and anon can't read the call log", (await count(STR, "call_activity")) === 0 && (await count(OLD, "call_activity")) === 0 && (() => true)());
+  ok("STRANGER and a switched-off member can't read the call log", (await count(STR, "call_activity")) === 0 && (await count(OLD, "call_activity")) === 0);
   const anonCalls = await count("anon", "call_activity");
   ok("ANON can't read the call log", anonCalls === 0 || String(anonCalls).startsWith("ERR"), anonCalls);
 
-  ok("MANAGER reads the webhook log", (await count(L, "justcall_events")) === 1);
-  ok("JAN cannot read the webhook log (managers only)", (await count(JAN, "justcall_events")) === 0);
-  ok("SAM and a stranger can't read the webhook log", (await count(SAM, "justcall_events")) === 0 && (await count(STR, "justcall_events")) === 0);
+  ok("MANAGER reads the webhook log", (await count(L, "dialsheet_events")) === 1);
+  ok("JAN cannot read the webhook log (managers only)", (await count(JAN, "dialsheet_events")) === 0);
+  ok("SAM and a stranger can't read the webhook log", (await count(SAM, "dialsheet_events")) === 0 && (await count(STR, "dialsheet_events")) === 0);
 
   // Nobody writes from a browser session: only the app's server (service role) records calls
   const janIns2 = await tryWrite(JAN, `insert into public.call_activity (provider_call_id, direction, call_type) values ('forged', 'outgoing', 'answered')`);
@@ -307,20 +319,31 @@ try {
   ok("JAN cannot edit or delete logged calls (0 rows)", (await tryWrite(JAN, `update public.call_activity set duration_seconds = 9999`)) === 0 && (await tryWrite(JAN, `delete from public.call_activity`)) === 0);
   const mgrIns = await tryWrite(L, `insert into public.call_activity (provider_call_id, direction, call_type) values ('forged2', 'outgoing', 'answered')`);
   ok("even a MANAGER session cannot write the call log directly", typeof mgrIns === "string" && /row-level security/.test(mgrIns), mgrIns);
-  ok("MANAGER cannot write the webhook log either", typeof (await tryWrite(L, `insert into public.justcall_events (outcome) values ('processed')`)) === "string");
+  ok("MANAGER cannot write the webhook log either", typeof (await tryWrite(L, `insert into public.dialsheet_events (outcome) values ('processed')`)) === "string");
   ok("...and the log is untouched", (await count("service", "call_activity")) === 2);
 
   // The log's own rules
-  const dup = await tryWrite("service", `insert into public.call_activity (provider_call_id, direction, call_type) values ('1001', 'outgoing', 'answered')`);
-  ok("the same JustCall call can't be logged twice (unique)", typeof dup === "string" && /unique|duplicate/i.test(dup), dup);
+  const dup = await tryWrite("service", `insert into public.call_activity (provider, provider_call_id, direction, call_type) values ('dialsheet', 'c_1001', 'outgoing', 'answered')`);
+  ok("the same DialSheet call can't be logged twice (unique)", typeof dup === "string" && /unique|duplicate/i.test(dup), dup);
   const badType = await tryWrite("service", `insert into public.call_activity (provider_call_id, direction, call_type) values ('9', 'outgoing', 'banana')`);
   ok("an unknown call type is refused", typeof badType === "string", badType);
-  const badOutcome = await tryWrite("service", `insert into public.justcall_events (outcome) values ('banana')`);
+  const badOutcome = await tryWrite("service", `insert into public.dialsheet_events (outcome) values ('banana')`);
   ok("an unknown webhook outcome is refused", typeof badOutcome === "string", badOutcome);
-  await db.exec(`delete from public.call_leads where id = (select lead_id from public.call_activity where provider_call_id = '1001')`);
-  const orphan = (await db.query(`select lead_id from public.call_activity where provider_call_id = '1001'`)).rows[0];
+  await db.exec(`delete from public.call_leads where id = (select lead_id from public.call_activity where provider_call_id = 'c_1001')`);
+  const orphan = (await db.query(`select lead_id from public.call_activity where provider_call_id = 'c_1001'`)).rows[0];
   ok("deleting a lead keeps its calls in the log (lead becomes empty)", orphan && orphan.lead_id === null, orphan);
-  const stamp = (await db.query(`select updated_at >= created_at as ok from public.call_activity where provider_call_id = '1001'`)).rows[0];
+  const stamp = (await db.query(`select updated_at >= created_at as ok from public.call_activity where provider_call_id = 'c_1001'`)).rows[0];
   ok("updated_at is maintained", stamp?.ok === true);
+
+  // A brand-new database (no earlier JustCall version at all) gets the same tables from the one migration
+  {
+    const fresh = await freshDb({ only: (f) => !f.includes("lock_database") });   // the lock refuses to run on an empty team; the new tables only need step 1's helpers
+    const have = (await fresh.db.query(`select table_name from information_schema.tables where table_schema = 'public' and table_name in ('call_activity', 'dialsheet_events') order by 1`)).rows.map((r) => r.table_name);
+    ok("a fresh database gets both tables from the migrations folder alone", JSON.stringify(have) === JSON.stringify(["call_activity", "dialsheet_events"]), have);
+    await fresh.db.exec(`insert into public.call_activity (provider_call_id, summary, next_steps) values ('f1', 's', 'n')`);
+    const frow = (await fresh.db.query(`select provider, source, summary from public.call_activity`)).rows[0];
+    ok("...with DialSheet as the default provider and the new columns", frow.provider === "dialsheet" && frow.source === "dialsheet" && frow.summary === "s", frow);
+    ok("...and RLS switched on for both", (await fresh.db.query(`select count(*)::int n from pg_class where relname in ('call_activity','dialsheet_events') and relrowsecurity`)).rows[0].n === 2);
+  }
 } catch (e) { fails++; console.log("ERROR:", String(e.message).slice(0, 400)); }
 console.log(`\n${passes} passed, ${fails} failed`);
