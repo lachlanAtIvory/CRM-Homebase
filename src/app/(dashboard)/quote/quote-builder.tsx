@@ -11,6 +11,8 @@ import {
   tierOf, upsellAvailable, upsellMonthly,
 } from "@/lib/hq/quote-math";
 import { Check, Copy, Eye, EyeOff, FilePlus, Plus, Save, Trash2, X } from "lucide-react";
+import type { QuoteClientApi } from "@/lib/hq/client-quotes";
+import { ClientLink } from "./client-link";
 
 /* ────────────────────────────────────────────────────────────────────────────
    Browser storage — drafts and saved quotes live in this browser only.
@@ -63,7 +65,12 @@ function useCountUp(target: number, duration = 450): number {
 /* ────────────────────────────────────────────────────────────────────────────
    Page component
 ──────────────────────────────────────────────────────────────────────────── */
-export function QuoteBuilder() {
+export function QuoteBuilder({ api, initialClientId }: {
+  /** The server calls for quotes that belong to a client. */
+  api: QuoteClientApi;
+  /** Open with this client already chosen (the ?client= link from a client or application). */
+  initialClientId?: string;
+}) {
   const [state, setState] = useState<QuoteState>(defaultState);
   const [ready, setReady] = useState(false);
   const [saved, setSaved] = useState<Record<string, unknown>>({});
@@ -179,7 +186,7 @@ export function QuoteBuilder() {
           </p>
           {internal && (
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Quotes save in this browser only. Prices exclude GST unless you switch it on in Terms.
+              Quotes linked to a client are kept with them. Others save in this browser only. Prices exclude GST unless you switch it on in Terms.
             </p>
           )}
         </div>
@@ -223,6 +230,17 @@ export function QuoteBuilder() {
           </button>
         </div>
       </div>
+
+      {internal && (
+        <ClientLink
+          api={api}
+          state={state}
+          initialClientId={initialClientId}
+          flash={flash}
+          onReplace={(s) => { disarmDelete(); setState(s); }}
+          onClinicName={(name) => edit((d) => { d.clinic = name; })}
+        />
+      )}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_390px]">
         {/* ── Left: the build ─────────────────────────────────────────────── */}

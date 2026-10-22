@@ -2,8 +2,6 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { resend, FROM_EMAIL, COMPANY_NAME } from "@/lib/resend";
-import { renderInvoiceHTML, type InvoiceData } from "@/lib/invoice-template";
 import { applyDiscount } from "./pricing";
 import { assertAccess } from "@/lib/hq/access-guard";
 
@@ -29,6 +27,9 @@ export type TeamMember = {
 export type ApplicationInput = {
   // OPTIONAL: when set we UPDATE the existing row, otherwise INSERT a new one
   application_id?:   string;
+  // OPTIONAL: the CRM client this application is for (opened from the client or pushed from a quote).
+  // When set it is used as the client, instead of guessing from the email.
+  client_id?:        string;
   // Client Details
   company_name:     string;
   owner_name:       string;
@@ -63,7 +64,6 @@ export type SubmitResult =
   | {
       ok: true;
       application_id: string;
-      invoice_sent: boolean;
       /**
        * True when the action found an existing application for the same
        * client (matched by email) and updated it rather than creating a
@@ -113,7 +113,7 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
   // that existing one instead of creating a duplicate.
   const existingForClient = input.application_id
     ? null
-    : await findExistingAppForClientByEmail(supabase, input.contact_email);
+    : await findExistingAppForClient(supabase, input);
   const mergedFlag = !!existingForClient;
 
   let appId: string;
@@ -143,12 +143,13 @@ export async function saveDraft(input: ApplicationInput): Promise<SubmitResult> 
   // there's a company name to anchor it to.
   await linkApplicationToClient(appId, input);
 
-  return { ok: true, application_id: appId, invoice_sent: false, merged: mergedFlag };
+  return { ok: true, application_id: appId, merged: mergedFlag };
 }
 
 // ---------------------------------------------------------------------------
-// Submit — saves the application, ensures a CRM client + deal exist,
-// then sends the invoice email via Resend.
+// Submit — saves the application as submitted and makes sure a CRM client and
+// a "quoted" deal exist. It does NOT email an invoice: invoicing happens
+// outside the CRM.
 // ---------------------------------------------------------------------------
 export async function submitApplication(input: ApplicationInput): Promise<SubmitResult> {
   // Server actions are reachable on their own, so each one checks access itself.
@@ -158,8 +159,7 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
   const validation = validate(input);
   if (validation) return { ok: false, error: validation };
 
-  // 1. Save the application row — UPDATE existing or INSERT new — so we
-  // have an ID for the invoice number
+  // 1. Save the application row — UPDATE existing or INSERT new
   const baseRow = {
     company_name:           input.company_name.trim(),
     owner_name:             input.owner_name.trim()      || null,
@@ -188,7 +188,7 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
   // one rather than creating a duplicate.
   const existingForClient = input.application_id
     ? null
-    : await findExistingAppForClientByEmail(supabase, input.contact_email);
+    : await findExistingAppForClient(supabase, input);
   const mergedFlag = !!existingForClient;
 
   let appId: string;
@@ -216,9 +216,16 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
   // 2. Ensure the application is linked to a CRM client (find by email or create)
   const clientId = await linkApplicationToClient(app.id, input, { updateClient: true });
 
-  // 3. Upsert a single 'quoted' deal for this client — use the
-  // post-discount upfront so the pipeline reflects the actual price.
-  const discountedUpfront = applyDiscount(input.upfront_total_aud, input.discount_percent);
+  // 3. Upsert a single 'quoted' deal for this client. The value is the one-off setup,
+  // excluding GST. When a quote was pushed to this application its price already includes
+  // its own discount; the old per-application discount only applies to old, catalogue-priced ones.
+  const { data: saved } = await supabase
+    .from("applications")
+    .select("quote_snapshot")
+    .eq("id", app.id)
+    .maybeSingle();
+  const hasQuote = !!saved?.quote_snapshot;
+  const dealValue = hasQuote ? input.upfront_total_aud : applyDiscount(input.upfront_total_aud, input.discount_percent);
   if (clientId) {
     const { data: existingDeal } = await supabase
       .from("deals")
@@ -230,7 +237,7 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
     if (existingDeal?.id) {
       await supabase
         .from("deals")
-        .update({ deal_value_aud: discountedUpfront })
+        .update({ deal_value_aud: dealValue })
         .eq("id", existingDeal.id);
     } else {
       await supabase
@@ -238,117 +245,22 @@ export async function submitApplication(input: ApplicationInput): Promise<Submit
         .insert({
           client_id:      clientId,
           current_stage:  "quoted",
-          deal_value_aud: discountedUpfront,
+          deal_value_aud: dealValue,
         });
     }
   }
 
-  // 5. Build & send the invoice email
-  const invoiceNumber = `INV-${app.id.slice(0, 8).toUpperCase()}`;
-  let invoiceSent = false;
-  const email = input.contact_email.trim();
-
-  if (email) {
-    try {
-      const productLines       = await fetchSelectedProductsForInvoice(input.selected_products);
-      const upfrontSubtotal    = input.upfront_total_aud;
-      const monthlySubtotal    = input.monthly_total_aud;
-      const discountUpfrontAmt = upfrontSubtotal - applyDiscount(upfrontSubtotal, input.discount_percent);
-      const discountMonthlyAmt = monthlySubtotal - applyDiscount(monthlySubtotal, input.discount_percent);
-      const upfrontAfterDisc   = upfrontSubtotal - discountUpfrontAmt;
-      const monthlyAfterDisc   = monthlySubtotal - discountMonthlyAmt;
-      const gstAmount          = upfrontAfterDisc * 0.10;
-      const totalNow           = upfrontAfterDisc + gstAmount;
-
-      const today = new Date();
-      const due   = new Date(today);
-      due.setDate(due.getDate() + 14);
-
-      const data: InvoiceData = {
-        invoice_number:   invoiceNumber,
-        issue_date:       fmtDate(today),
-        due_date:         fmtDate(due),
-        bill_to_name:     input.owner_name.trim(),
-        bill_to_company:  input.company_name.trim(),
-        bill_to_email:    email,
-        bill_to_address:  input.trading_address.trim() || null,
-        bill_to_abn:      input.abn.trim() || null,
-        line_items:       productLines,
-        upfront_subtotal: upfrontSubtotal,
-        monthly_subtotal: monthlySubtotal,
-        discount_percent:        input.discount_percent || 0,
-        discount_reason:         input.discount_reason.trim() || null,
-        discount_upfront_amount: discountUpfrontAmt,
-        discount_monthly_amount: discountMonthlyAmt,
-        upfront_after_discount:  upfrontAfterDisc,
-        monthly_after_discount:  monthlyAfterDisc,
-        gst_rate:         0.10,
-        gst_amount:       gstAmount,
-        total_payable_now: totalNow,
-      };
-
-      const html = renderInvoiceHTML(data);
-
-      const send = await resend.emails.send({
-        from:    `${COMPANY_NAME} <${FROM_EMAIL}>`,
-        to:      [email],
-        replyTo: FROM_EMAIL,
-        subject: `${invoiceNumber} — ${COMPANY_NAME} application`,
-        html,
-      });
-
-      if (!send.error) {
-        invoiceSent = true;
-        await supabase
-          .from("applications")
-          .update({
-            invoice_number:  invoiceNumber,
-            invoice_sent_at: new Date().toISOString(),
-            status:          "invoiced",
-          })
-          .eq("id", app.id);
-      } else {
-        console.error("Resend send error:", send.error);
-      }
-    } catch (e) {
-      console.error("Invoice email failed:", e);
-    }
-  }
-
-  return { ok: true, application_id: app.id, invoice_sent: invoiceSent, merged: mergedFlag };
+  return { ok: true, application_id: app.id, merged: mergedFlag };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-async function fetchSelectedProductsForInvoice(
-  keys: string[],
-): Promise<{ label: string; upfront_aud: number; monthly_aud: number }[]> {
-  if (keys.length === 0) return [];
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("products")
-    .select("key, label, upfront_cost_aud, monthly_cost_aud")
-    .in("key", keys);
-
-  return (data ?? []).map((p) => ({
-    label:       p.label,
-    upfront_aud: Number(p.upfront_cost_aud) || 0,
-    monthly_aud: Number(p.monthly_cost_aud) || 0,
-  }));
-}
-
-function fmtDate(d: Date): string {
-  // Invoices are issued from Sydney; pin TZ so the date doesn't shift when
-  // generated late at night UTC
-  return d.toLocaleDateString("en-AU", {
-    day: "numeric", month: "short", year: "numeric",
-    timeZone: "Australia/Sydney",
-  });
-}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function validate(input: ApplicationInput): string | null {
   if (!input.company_name.trim()) return "Company name is required.";
+  if (input.client_id && !UUID.test(input.client_id)) return "That client isn't valid.";
   if (input.contact_email && !/^\S+@\S+\.\S+$/.test(input.contact_email.trim())) {
     return "Contact email looks invalid.";
   }
@@ -391,9 +303,19 @@ async function linkApplicationToClient(
 
   let clientId: string | null = null;
 
+  // The client this application was opened for is the client, whatever the email says.
+  if (input.client_id) {
+    const { data: chosen } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("id", input.client_id)
+      .maybeSingle();
+    if (chosen?.id) clientId = chosen.id;
+  }
+
   // Match by email if present — this can switch the link to a different
   // client if the user changed the email to one that matches a real client
-  if (email) {
+  if (!clientId && email) {
     const { data: existing } = await supabase
       .from("clients")
       .select("id")
@@ -456,22 +378,36 @@ async function linkApplicationToClient(
 }
 
 // ---------------------------------------------------------------------------
-// Dedup helper — looks up a client by email and returns the id of their most
-// recent application (if any). Used to merge a fresh save into an existing
-// app rather than creating a duplicate per client.
+// Dedup helper — finds the client (the one the form was opened for, else the one
+// with this email) and returns the id of their most recent application (if any).
+// Used to merge a fresh save into an existing app rather than creating a
+// duplicate per client.
 // ---------------------------------------------------------------------------
-async function findExistingAppForClientByEmail(
+async function findExistingAppForClient(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  email:    string,
+  input:    ApplicationInput,
 ): Promise<string | null> {
-  const trimmed = email.trim();
-  if (!trimmed) return null;
+  let client: { id: string } | null = null;
 
-  const { data: client } = await supabase
-    .from("clients")
-    .select("id")
-    .eq("email", trimmed)
-    .maybeSingle();
+  if (input.client_id) {
+    const { data } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("id", input.client_id)
+      .maybeSingle();
+    client = data ?? null;
+  }
+
+  if (!client) {
+    const trimmed = input.contact_email.trim();
+    if (!trimmed) return null;
+    const { data } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("email", trimmed)
+      .maybeSingle();
+    client = data ?? null;
+  }
 
   if (!client?.id) return null;
 

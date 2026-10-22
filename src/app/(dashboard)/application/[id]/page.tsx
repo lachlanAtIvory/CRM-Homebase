@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ApplicationForm } from "../_form/application-form";
+import { isOfferingKey } from "@/lib/hq/offerings";
+import { readSnapshot } from "@/lib/hq/quote-to-application";
 
 export default async function ApplicationEditPage({
   params,
@@ -11,10 +13,10 @@ export default async function ApplicationEditPage({
   const supabase = await createClient();
 
   const [{ data: products }, { data: app }] = await Promise.all([
+    // The old catalogue, only so an application made under it still reads properly.
     supabase
       .from("products")
       .select("key, label, description, upfront_cost_aud, monthly_cost_aud")
-      .eq("is_active", true)
       .order("sort_order", { ascending: true }),
     supabase
       .from("applications")
@@ -25,13 +27,16 @@ export default async function ApplicationEditPage({
 
   if (!app) notFound();
 
-  const normalised = (products ?? []).map((p) => ({
-    key:              p.key as string,
-    label:            p.label as string,
-    description:      (p.description as string | null) ?? "",
-    upfront_cost_aud: Number(p.upfront_cost_aud) || 0,
-    monthly_cost_aud: Number(p.monthly_cost_aud) || 0,
-  }));
+  const selected: string[] = Array.isArray(app.selected_products) ? app.selected_products : [];
+  const legacyProducts = (products ?? [])
+    .filter((p) => !isOfferingKey(p.key as string) && selected.includes(p.key as string))
+    .map((p) => ({
+      key:              p.key as string,
+      label:            p.label as string,
+      description:      (p.description as string | null) ?? "",
+      upfront_cost_aud: Number(p.upfront_cost_aud) || 0,
+      monthly_cost_aud: Number(p.monthly_cost_aud) || 0,
+    }));
 
   // Hydrate the form's initial values from the saved row
   const initialValues = {
@@ -59,15 +64,18 @@ export default async function ApplicationEditPage({
       <div>
         <h1 className="text-2xl font-bold">Application — {initialValues.company_name || "Untitled"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Editing an existing application. Changes save automatically when you click
-          Save Draft.
+          Editing an existing application. Changes save when you click Save Draft.
+          Pushing a quote from the Quote Builder replaces the products and price here.
         </p>
       </div>
 
       <ApplicationForm
-        products={normalised}
+        legacyProducts={legacyProducts}
         initialValues={initialValues}
         applicationId={app.id as string}
+        clientId={(app.client_id as string | null) ?? undefined}
+        quote={readSnapshot(app.quote_snapshot)}
+        quotePushedAt={(app.quote_pushed_at as string | null) ?? null}
       />
     </div>
   );

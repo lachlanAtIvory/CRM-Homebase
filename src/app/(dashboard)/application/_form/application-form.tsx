@@ -1,10 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays, Download, AlertCircle, Briefcase, Plus, CalendarClock } from "lucide-react";
+import { CheckCircle2, Send, Save, Loader2, UserPlus, Trash2, CalendarDays, Download, AlertCircle, Briefcase, Plus, CalendarClock, Calculator } from "lucide-react";
+import { findOffering, offeringGroups } from "@/lib/hq/offerings";
+import { money } from "@/lib/hq/quote-math";
+import type { QuoteSnapshot } from "@/lib/hq/quote-to-application";
+import { formatSydney } from "@/lib/hq/sydney-time";
 import { saveDraft, submitApplication, type ApplicationInput, type TeamMember, type Service } from "./actions";
 import { computeCompletion } from "./completion";
 import { CompletionRing } from "./completion-ring";
@@ -76,13 +81,22 @@ function fmtAud(v: number) {
 }
 
 export function ApplicationForm({
-  products,
+  legacyProducts,
   initialValues,
   applicationId: initialApplicationId,
+  clientId,
+  quote,
+  quotePushedAt,
 }: {
-  products:       Product[];
+  /** Old-catalogue products (priced) selected on an application made before the new offerings. */
+  legacyProducts: Product[];
   initialValues?: Partial<FormValues>;
   applicationId?: string;
+  /** The CRM client this application is for. */
+  clientId?: string;
+  /** The quote pushed to this application from the Quote Builder, if any. */
+  quote?: QuoteSnapshot | null;
+  quotePushedAt?: string | null;
 }) {
   const router = useRouter();
   const [v, setV] = useState<FormValues>({ ...EMPTY, ...(initialValues ?? {}) });
@@ -90,27 +104,35 @@ export function ApplicationForm({
   // subsequent saves UPDATE the same row instead of creating duplicates.
   const [applicationId, setApplicationId] = useState<string | undefined>(initialApplicationId);
   const [busy, setBusy] = useState<"idle" | "draft" | "submit" | "finalise">("idle");
-  const [success, setSuccess] = useState<{ id: string; invoiceSent: boolean } | null>(null);
+  const [success, setSuccess] = useState<{ id: string } | null>(null);
 
   // Live completion calculation
   const completion = useMemo(() => computeCompletion(v), [v]);
 
-  // Live quote totals (pre-discount)
+  // The price comes from the quote when one was pushed. An old application priced from the
+  // old catalogue keeps its own numbers.
+  const legacySelected = useMemo(
+    () => legacyProducts.filter((p) => v.selected_products.includes(p.key)),
+    [legacyProducts, v.selected_products],
+  );
   const { upfrontTotal, monthlyTotal } = useMemo(() => {
+    if (quote) {
+      return {
+        upfrontTotal: Math.round(quote.summary.setupTotal * 100) / 100,
+        monthlyTotal: Math.round(quote.summary.monthlyTotal * 100) / 100,
+      };
+    }
     let upfront = 0;
     let monthly = 0;
-    for (const p of products) {
-      if (v.selected_products.includes(p.key)) {
-        upfront += p.upfront_cost_aud;
-        monthly += p.monthly_cost_aud;
-      }
+    for (const p of legacySelected) {
+      upfront += p.upfront_cost_aud;
+      monthly += p.monthly_cost_aud;
     }
     return { upfrontTotal: upfront, monthlyTotal: monthly };
-  }, [v.selected_products, products]);
+  }, [quote, legacySelected]);
 
-  // Live quote breakdown including discount + GST — single source of truth
-  // shared with the server-side actions / invoice generator
-  const quote = useMemo(
+  // Old-style breakdown (discount + GST), only shown for old catalogue-priced applications
+  const legacyQuote = useMemo(
     () => calcQuote(upfrontTotal, monthlyTotal, v.discount_percent),
     [upfrontTotal, monthlyTotal, v.discount_percent],
   );
@@ -183,6 +205,7 @@ export function ApplicationForm({
     return {
       ...v,
       application_id:    applicationId,
+      client_id:         clientId,
       upfront_total_aud: upfrontTotal,
       monthly_total_aud: monthlyTotal,
     };
@@ -226,13 +249,8 @@ export function ApplicationForm({
     const promise = submitApplication(buildPayload());
 
     toast.promise(promise, {
-      loading: "Submitting application and sending invoice…",
-      success: (r) =>
-        r.ok
-          ? r.invoice_sent
-            ? "✨ Application submitted — invoice emailed to client"
-            : "Application saved — invoice email failed (check Resend setup)"
-          : "",
+      loading: "Submitting application…",
+      success: (r) => (r.ok ? "✨ Application submitted" : ""),
       error: "Something went wrong submitting the application.",
     });
 
@@ -243,7 +261,7 @@ export function ApplicationForm({
       return;
     }
     setApplicationId(result.application_id);
-    setSuccess({ id: result.application_id, invoiceSent: result.invoice_sent });
+    setSuccess({ id: result.application_id });
     router.refresh();
   }
 
@@ -267,14 +285,15 @@ export function ApplicationForm({
       ]);
 
       // 3. Build product data with full pricing for the PDF
-      const selectedProducts = products
-        .filter((p) => v.selected_products.includes(p.key))
-        .map((p) => ({
-          key:              p.key,
-          label:            p.label,
-          upfront_cost_aud: p.upfront_cost_aud,
-          monthly_cost_aud: p.monthly_cost_aud,
-        }));
+      const selectedProducts = v.selected_products.map((key) => {
+        const legacy = legacyProducts.find((p) => p.key === key);
+        return {
+          key,
+          label:            findOffering(key)?.label ?? legacy?.label ?? key,
+          upfront_cost_aud: legacy?.upfront_cost_aud ?? 0,
+          monthly_cost_aud: legacy?.monthly_cost_aud ?? 0,
+        };
+      });
 
       const blob = await pdf(
         <ApplicationPDF
@@ -292,6 +311,16 @@ export function ApplicationForm({
             booking_platform_url:   v.booking_platform_url,
             booking_platform_notes: v.booking_platform_notes,
             selected_products:      selectedProducts,
+            quote:                  quote ? {
+              setup_total:      quote.summary.setupTotal,
+              monthly_total:    quote.summary.monthlyTotal,
+              gst_shown:        quote.summary.gst,
+              term:             quote.summary.term,
+              tier_label:       quote.summary.tierLabel,
+              clinic_type:      quote.summary.clinicTypeLabel,
+              setup_lines:      quote.summary.setup,
+              monthly_lines:    quote.summary.monthly,
+            } : null,
             upfront_total_aud:      upfrontTotal,
             monthly_total_aud:      monthlyTotal,
             discount_percent:       v.discount_percent,
@@ -332,7 +361,7 @@ export function ApplicationForm({
   if (success) {
     return (
       <SuccessPanel
-        invoiceSent={success.invoiceSent}
+        applicationId={success.id}
         onNew={() => {
           setSuccess(null);
           setV(EMPTY);
@@ -574,141 +603,139 @@ export function ApplicationForm({
         </div>
       </Card>
 
-      {/* ───────── Product Details ───────── */}
-      <Card title="Product Details">
-        <p className="mb-4 text-xs text-muted-foreground">
-          Tick the products this client is signing up for. The quote on the right
-          updates automatically.
-        </p>
-        <div className="space-y-2">
-          {products.map((p) => {
-            const active = v.selected_products.includes(p.key);
-            return (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => toggleProduct(p.key)}
-                className={cn(
-                  "flex w-full items-center justify-between gap-4 rounded-lg border p-4 text-left transition-all duration-150 active:scale-[0.99]",
-                  active
-                    ? "border-primary/50 bg-primary/5 shadow-sm ring-1 ring-primary/20"
-                    : "border-border bg-background hover:border-foreground/20 hover:bg-muted/30",
-                )}
-              >
-                <div className="flex min-w-0 items-start gap-3">
-                  <span
-                    className={cn(
-                      "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border",
-                      active
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border bg-background",
-                    )}
-                  >
-                    {active && <CheckCircle2 size={14} />}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{p.label}</div>
-                    {p.description && (
-                      <div className="mt-0.5 text-xs text-muted-foreground">{p.description}</div>
-                    )}
-                  </div>
-                </div>
-                <div className="text-right text-xs">
-                  <div className="font-semibold text-foreground">
-                    {fmtAud(p.upfront_cost_aud)}
-                  </div>
-                  <div className="text-muted-foreground">
-                    + {fmtAud(p.monthly_cost_aud)}/mo
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+      {/* ───────── Products ───────── */}
+      <Card title="Products">
+        {quote ? (
+          <QuotePanel quote={quote} pushedAt={quotePushedAt ?? null} clientId={clientId} />
+        ) : (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed bg-muted/20 p-3">
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+              No quote has been pushed here. Build it in the Quote Builder and push it across to fill in
+              the products and price, or tick the products by hand.
+            </p>
+            <Link
+              href={clientId ? `/quote?client=${clientId}` : "/quote"}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-medium transition-all hover:bg-muted/40 active:scale-[0.97]"
+            >
+              <Calculator size={13} /> Open Quote Builder
+            </Link>
+          </div>
+        )}
 
-        {/* Discount — applies to both upfront + monthly */}
-        <div className="mt-5 rounded-lg border bg-card p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Discount
+        {offeringGroups().map((g) => (
+          <div key={g.group} className="mb-4 last:mb-0">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{g.label}</div>
+            <div className="space-y-2">
+              {g.items.map((o) => (
+                <ProductRow
+                  key={o.key}
+                  label={o.label}
+                  description={o.desc}
+                  active={v.selected_products.includes(o.key)}
+                  onToggle={() => toggleProduct(o.key)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {/* An application made under the old catalogue keeps its products and prices */}
+        {legacyProducts.length > 0 && (
+          <div className="mt-5">
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Chosen under the old catalogue</div>
+            <p className="mb-2 text-xs text-muted-foreground">These were picked before the new offerings. Untick any that no longer apply.</p>
+            <div className="space-y-2">
+              {legacyProducts.map((p) => (
+                <ProductRow
+                  key={p.key}
+                  label={p.label}
+                  description={p.description}
+                  active={v.selected_products.includes(p.key)}
+                  onToggle={() => toggleProduct(p.key)}
+                  right={
+                    <div className="text-right text-xs">
+                      <div className="font-semibold text-foreground">{fmtAud(p.upfront_cost_aud)}</div>
+                      <div className="text-muted-foreground">+ {fmtAud(p.monthly_cost_aud)}/mo</div>
+                    </div>
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Old-style discount + summary: only for an application priced from the old catalogue */}
+        {!quote && legacySelected.length > 0 && (
+          <>
+            <div className="mt-5 rounded-lg border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Discount
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Applies to both the upfront setup and the monthly retainer.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={v.discount_percent === 0 ? "" : v.discount_percent}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      set("discount_percent", isNaN(n) ? 0 : Math.max(0, Math.min(100, n)));
+                    }}
+                    placeholder="0"
+                    className="w-20 rounded-md border bg-background px-2 py-1.5 text-right text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
+                  />
+                  <span className="text-sm font-semibold text-muted-foreground">%</span>
+                </div>
               </div>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Applies to both the upfront setup and the monthly retainer.
-              </p>
+              {v.discount_percent > 0 && (
+                <input
+                  type="text"
+                  value={v.discount_reason}
+                  onChange={(e) => set("discount_reason", e.target.value)}
+                  placeholder="Reason (e.g. Friends & family, loyalty, launch promo)"
+                  className="w-full rounded-md border bg-background px-3 py-1.5 text-xs outline-none ring-1 ring-transparent focus:ring-primary/40"
+                />
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={v.discount_percent === 0 ? "" : v.discount_percent}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  set("discount_percent", isNaN(n) ? 0 : Math.max(0, Math.min(100, n)));
-                }}
-                placeholder="0"
-                className="w-20 rounded-md border bg-background px-2 py-1.5 text-right text-sm outline-none ring-1 ring-transparent focus:ring-primary/40"
-              />
-              <span className="text-sm font-semibold text-muted-foreground">%</span>
-            </div>
-          </div>
-          {v.discount_percent > 0 && (
-            <input
-              type="text"
-              value={v.discount_reason}
-              onChange={(e) => set("discount_reason", e.target.value)}
-              placeholder="Reason (e.g. Friends & family, loyalty, launch promo)"
-              className="w-full rounded-md border bg-background px-3 py-1.5 text-xs outline-none ring-1 ring-transparent focus:ring-primary/40"
-            />
-          )}
-        </div>
 
-        {/* Live quote */}
-        <div className="mt-3 rounded-lg border bg-muted/30 p-4">
-          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Quote Summary
-          </div>
-          <div className="space-y-1.5">
-            <Row label="Upfront setup subtotal" value={fmtAud(upfrontTotal)} />
-            <Row label="Monthly retainer subtotal" value={`${fmtAud(monthlyTotal)} / month`} />
-            {v.discount_percent > 0 && (
-              <>
-                <div className="my-1 border-t border-dashed" />
-                <Row
-                  label={`Discount (${v.discount_percent}% off setup)`}
-                  value={`−${fmtAud(quote.discount_upfront_amount)}`}
-                  accent
-                />
-                <Row
-                  label={`Discount (${v.discount_percent}% off monthly)`}
-                  value={`−${fmtAud(quote.discount_monthly_amount)} / month`}
-                  accent
-                />
-                <Row
-                  label="Setup after discount"
-                  value={fmtAud(quote.upfront_after_discount)}
-                />
-                <Row
-                  label="Monthly after discount"
-                  value={`${fmtAud(quote.monthly_after_discount)} / month`}
-                />
-              </>
-            )}
-            <Row
-              label="GST (10%) on setup"
-              value={fmtAud(quote.gst_amount)}
-              dim
-            />
-            <div className="my-2 border-t" />
-            <Row
-              label="Total payable now (inc. GST)"
-              value={fmtAud(quote.total_payable_now)}
-              strong
-            />
-          </div>
-        </div>
+            <div className="mt-3 rounded-lg border bg-muted/30 p-4">
+              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Quote Summary
+              </div>
+              <div className="space-y-1.5">
+                <Row label="Upfront setup subtotal" value={fmtAud(upfrontTotal)} />
+                <Row label="Monthly retainer subtotal" value={`${fmtAud(monthlyTotal)} / month`} />
+                {v.discount_percent > 0 && (
+                  <>
+                    <div className="my-1 border-t border-dashed" />
+                    <Row
+                      label={`Discount (${v.discount_percent}% off setup)`}
+                      value={`−${fmtAud(legacyQuote.discount_upfront_amount)}`}
+                      accent
+                    />
+                    <Row
+                      label={`Discount (${v.discount_percent}% off monthly)`}
+                      value={`−${fmtAud(legacyQuote.discount_monthly_amount)} / month`}
+                      accent
+                    />
+                    <Row label="Setup after discount" value={fmtAud(legacyQuote.upfront_after_discount)} />
+                    <Row label="Monthly after discount" value={`${fmtAud(legacyQuote.monthly_after_discount)} / month`} />
+                  </>
+                )}
+                <Row label="GST (10%) on setup" value={fmtAud(legacyQuote.gst_amount)} dim />
+                <div className="my-2 border-t" />
+                <Row label="Total payable now (inc. GST)" value={fmtAud(legacyQuote.total_payable_now)} strong />
+              </div>
+            </div>
+          </>
+        )}
       </Card>
 
       {/* ───────── Goals & Requirements ───────── */}
@@ -755,7 +782,7 @@ export function ApplicationForm({
           ) : (
             <Send size={14} />
           )}
-          {busy === "submit" ? "Submitting…" : "Submit & Send Invoice"}
+          {busy === "submit" ? "Submitting…" : "Submit Application"}
         </button>
 
         {/* Finalise & Export — gated on all required fields */}
@@ -1036,17 +1063,15 @@ function TeamMemberCard({
   );
 }
 
-function SuccessPanel({ invoiceSent, onNew }: { invoiceSent: boolean; onNew: () => void }) {
+function SuccessPanel({ applicationId, onNew }: { applicationId: string; onNew: () => void }) {
   return (
     <div className="rounded-xl border bg-card p-8 text-center ring-1 ring-foreground/5 animate-in fade-in zoom-in-95 duration-300">
       <div className="mx-auto mb-4 flex h-14 w-14 animate-in zoom-in-50 duration-500 items-center justify-center rounded-full bg-primary/10 text-primary ring-4 ring-primary/5">
         <CheckCircle2 size={28} />
       </div>
-      <h2 className="text-lg font-semibold">Application saved</h2>
+      <h2 className="text-lg font-semibold">Application submitted</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-        {invoiceSent
-          ? "The invoice has been emailed to the client and they've been added to your CRM."
-          : "Saved as draft — no invoice has been sent yet."}
+        It&apos;s saved against the client and their deal is marked as quoted. No invoice is sent from here.
       </p>
       <div className="mt-6 flex items-center justify-center gap-3">
         <button
@@ -1057,12 +1082,134 @@ function SuccessPanel({ invoiceSent, onNew }: { invoiceSent: boolean; onNew: () 
           New Application
         </button>
         <a
+          href={`/application/${applicationId}`}
+          className="rounded-lg border bg-background px-4 py-2 text-sm font-medium transition-all duration-150 hover:bg-muted/40 active:scale-[0.97]"
+        >
+          Back to Application
+        </a>
+        <a
           href="/clients"
           className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all duration-150 hover:bg-primary/90 hover:shadow active:scale-[0.97]"
         >
           View Clients
         </a>
       </div>
+    </div>
+  );
+}
+
+function ProductRow({ label, description, active, onToggle, right }: {
+  label: string; description: string; active: boolean; onToggle: () => void; right?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      className={cn(
+        "flex w-full items-center justify-between gap-4 rounded-lg border p-3.5 text-left transition-all duration-150 active:scale-[0.99]",
+        active
+          ? "border-primary/50 bg-primary/5 shadow-sm ring-1 ring-primary/20"
+          : "border-border bg-background hover:border-foreground/20 hover:bg-muted/30",
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <span
+          className={cn(
+            "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border",
+            active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background",
+          )}
+        >
+          {active && <CheckCircle2 size={14} />}
+        </span>
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{label}</div>
+          {description && <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>}
+        </div>
+      </div>
+      {right}
+    </button>
+  );
+}
+
+/** What the quote said, kept with the application: who the clinic is, what they pay, how it was priced. */
+function QuotePanel({ quote, pushedAt, clientId }: { quote: QuoteSnapshot; pushedAt: string | null; clientId?: string }) {
+  const q = quote.summary;
+  const factor = q.gst ? 1.1 : 1;
+  const gstNote = q.gst ? "inc GST" : "ex GST";
+  return (
+    <div className="mb-5 rounded-lg border border-primary/30 bg-primary/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide text-primary">From the quote</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {pushedAt ? `Pushed ${formatSydney(pushedAt)}. ` : ""}
+            Pushing again from the Quote Builder replaces the products and price below.
+          </p>
+        </div>
+        <Link
+          href={clientId ? `/quote?client=${clientId}` : "/quote"}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-medium transition-all hover:bg-muted/40 active:scale-[0.97]"
+        >
+          <Calculator size={13} /> Open quote
+        </Link>
+      </div>
+
+      <dl className="mt-3 grid gap-x-6 gap-y-1.5 text-xs sm:grid-cols-2">
+        <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Clinic</dt><dd className="text-right font-medium">{q.clinicTypeLabel}, {q.practitioners} practitioner{q.practitioners === 1 ? "" : "s"}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Size</dt><dd className="text-right font-medium">{q.tierLabel} tier, {q.band === "high" ? "high-value" : "standard"}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Practice software</dt><dd className="text-right font-medium">{q.pms.name || "Not named"}, {q.pms.integrates ? "books into it" : "team confirms bookings"}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Term</dt><dd className="text-right font-medium">{q.term === "12" ? "12 months" : "Month to month"}</dd></div>
+        {q.locations.length > 0 && (
+          <div className="flex justify-between gap-3 sm:col-span-2"><dt className="text-muted-foreground">Extra locations</dt><dd className="text-right font-medium">{q.locations.map((l) => `${l.name} (${l.practitioners})`).join(", ")}</dd></div>
+        )}
+        {q.offers.length > 0 && (
+          <div className="flex justify-between gap-3 sm:col-span-2"><dt className="text-muted-foreground">Ad offers</dt><dd className="text-right font-medium">{q.offers.map((o) => o.name || o.kindLabel).join(", ")}</dd></div>
+        )}
+        {q.core.some((c) => c.status === "live") && (
+          <div className="flex justify-between gap-3 sm:col-span-2"><dt className="text-muted-foreground">Already live</dt><dd className="text-right font-medium">{q.core.filter((c) => c.status === "live").map((c) => c.label).join(", ")}</dd></div>
+        )}
+      </dl>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-md border bg-background p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Setup (one-off)</div>
+          <div className="mt-0.5 text-lg font-bold tabular-nums">{money(q.setupTotal * factor)}</div>
+          <div className="text-[11px] text-muted-foreground">{gstNote}</div>
+        </div>
+        <div className="rounded-md border bg-background p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Monthly</div>
+          <div className="mt-0.5 text-lg font-bold tabular-nums">{money(q.monthlyTotal * factor)}</div>
+          <div className="text-[11px] text-muted-foreground">{gstNote}</div>
+        </div>
+      </div>
+
+      {(q.setup.length > 0 || q.monthly.length > 0) && (
+        <details className="mt-3 text-xs">
+          <summary className="cursor-pointer select-none font-medium text-primary">See how it&apos;s priced</summary>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            {([["Setup", q.setup], ["Monthly", q.monthly]] as const).map(([title, lines]) => (
+              <div key={title}>
+                <div className="mb-1 font-semibold">{title}</div>
+                <ul className="space-y-0.5">
+                  {lines.map((l, i) => (
+                    <li key={i} className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">{l.label}</span>
+                      <span className={cn("tabular-nums", l.neg && "text-emerald-700 dark:text-emerald-300")}>{money(l.amt * factor)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {q.flags.length > 0 && (
+        <ul className="mt-3 space-y-1 text-xs text-amber-800 dark:text-amber-300">
+          {q.flags.map((f, i) => <li key={i} className="flex gap-1.5"><AlertCircle size={13} className="mt-0.5 shrink-0" />{f}</li>)}
+        </ul>
+      )}
     </div>
   );
 }
