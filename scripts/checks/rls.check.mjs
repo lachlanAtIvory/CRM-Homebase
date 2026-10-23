@@ -272,5 +272,54 @@ try {
   ok("UNDO: Jan with Tasks can read clients again (the old behaviour)", (await count(JAN, "clients")) >= 1);
   await db.exec(sql("migrations/20261019130000_tasks_ownership_and_client_privacy.sql"));
   ok("...and re-applying the migration restores the privacy", (await count(JAN, "clients")) === 0 && (await titles(JAN)).length >= 1);
+
+  // ═══════════════════════════════════════════════════════════════
+  // Round 3: quotes that belong to a client (client_quotes) + the quote kept on an application
+  // ═══════════════════════════════════════════════════════════════
+  const C1 = "00000000-0000-0000-0000-0000000000c1";
+  await db.exec(sql("migrations/20261023140000_add_client_quotes.sql"));
+  ok("round 3 (client quotes) migration applies on top of the lock", true);
+  await db.exec(sql("migrations/20261023140000_add_client_quotes.sql"));
+  ok("the client quotes migration is safe to run twice", true);
+
+  await db.exec(`update public.team_members set sections = '{call-list}' where email = '${JAN}'`);
+  await db.exec(`update public.team_members set sections = '{quote}' where email = '${SAM}'`);
+  await db.exec(`insert into public.client_quotes (client_id, state, summary, updated_by) values ('${C1}', '{"clinic":"Neutral Bay Dental"}', '{"setupTotal":1750}', '${L}')`);
+
+  ok("MANAGER reads client quotes", (await count(L, "client_quotes")) === 1 && (await count(R, "client_quotes")) === 1);
+  ok("a member with the Quote Builder section reads client quotes", (await count(SAM, "client_quotes")) === 1);
+  ok("JAN (Call List only) cannot read client quotes", (await count(JAN, "client_quotes")) === 0);
+  ok("a stranger and a switched-off member cannot", (await count(STR, "client_quotes")) === 0 && (await count(OLD, "client_quotes")) === 0);
+  const anonQ = await count("anon", "client_quotes");
+  ok("ANON cannot", anonQ === 0 || String(anonQ).startsWith("ERR"), anonQ);
+
+  ok("a Quote Builder member can update a quote", (await tryWrite(SAM, `update public.client_quotes set summary = '{"setupTotal":2000}' where client_id = '${C1}'`)) === 1);
+  const janQ = await tryWrite(JAN, `insert into public.client_quotes (client_id, state) values ('${C1}', '{}')`);
+  ok("JAN cannot add a quote", typeof janQ === "string" && /row-level security|unique|duplicate/i.test(janQ), janQ);
+  ok("JAN cannot change or delete quotes (0 rows)", (await tryWrite(JAN, `update public.client_quotes set summary = '{}'`)) === 0 && (await tryWrite(JAN, `delete from public.client_quotes`)) === 0);
+  ok("...the quote is unchanged", (await db.query(`select summary->>'setupTotal' v from public.client_quotes`)).rows[0].v === "2000");
+
+  await db.exec(`update public.team_members set sections = '{applications}' where email = '${JAN}'`);
+  ok("a member with the Applications section can also read quotes (the application shows them)", (await count(JAN, "client_quotes")) === 1);
+  await db.exec(`update public.team_members set sections = '{call-list}' where email = '${JAN}'`);
+
+  const dupQ = await tryWrite("service", `insert into public.client_quotes (client_id, state) values ('${C1}', '{}')`);
+  ok("one quote per client (unique)", typeof dupQ === "string" && /unique|duplicate/i.test(dupQ), dupQ);
+  const noState = await tryWrite("service", `insert into public.client_quotes (client_id) values ('${C1}')`);
+  ok("a quote needs its state", typeof noState === "string", noState);
+  const before = (await db.query(`select updated_at from public.client_quotes`)).rows[0].updated_at;
+  await new Promise((r) => setTimeout(r, 15));
+  await db.exec(`update public.client_quotes set updated_by = 'x'`);
+  ok("updated_at moves when a quote changes", (await db.query(`select updated_at > '${new Date(before).toISOString()}'::timestamptz ok from public.client_quotes`)).rows[0].ok === true);
+
+  // the application carries the quote it was built from
+  await db.exec(`update public.team_members set sections = '{applications}' where email = '${JAN}'`);
+  await db.exec(`insert into public.applications (client_id, company_name, quote_snapshot, quote_pushed_at) values ('${C1}', 'Neutral Bay Dental', '{"summary":{"setupTotal":1750},"state":{}}', now())`);
+  ok("an application stores its quote snapshot, readable by an Applications member", (await as(db, JAN, `select quote_snapshot->'summary'->>'setupTotal' v from public.applications`)).rows[0].v === "1750");
+  ok("a member without Applications cannot read it", (await count(SAM, "applications")) === 0);
+  await db.exec(`update public.team_members set sections = '{call-list}' where email = '${JAN}'`);
+
+  await db.exec(`delete from public.clients where id = '${C1}'`);
+  ok("deleting a client removes their quote", (await count("service", "client_quotes")) === 0);
 } catch (e) { fails++; console.log("ERROR:", String(e.message).slice(0, 400)); }
 console.log(`\n${passes} passed, ${fails} failed`);

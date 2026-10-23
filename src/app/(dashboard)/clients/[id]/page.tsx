@@ -114,13 +114,22 @@ export default async function ClientDetailPage({
       <div className="rounded-xl border bg-card p-5 ring-1 ring-foreground/5">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold">Applications</h2>
-          <Link
-            href="/application/new"
-            className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-xs font-medium transition-all duration-150 hover:bg-muted/40 active:scale-[0.97]"
-          >
-            <Rocket size={12} />
-            New
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/quote?client=${id}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-xs font-medium transition-all duration-150 hover:bg-muted/40 active:scale-[0.97]"
+            >
+              <FileText size={12} />
+              Quote
+            </Link>
+            <Link
+              href={`/application/new?client=${id}`}
+              className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-xs font-medium transition-all duration-150 hover:bg-muted/40 active:scale-[0.97]"
+            >
+              <Rocket size={12} />
+              {applications && applications.length > 0 ? "Open" : "New"}
+            </Link>
+          </div>
         </div>
 
         {!applications || applications.length === 0 ? (

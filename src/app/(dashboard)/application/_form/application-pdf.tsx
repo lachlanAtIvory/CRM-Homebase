@@ -11,6 +11,19 @@ export type PdfProduct = {
   monthly_cost_aud: number;
 };
 
+/** The price from a quote pushed from the Quote Builder (totals exclude GST). */
+export type PdfQuote = {
+  setup_total:   number;
+  monthly_total: number;
+  /** Whether the quote was shown to the client including GST. */
+  gst_shown:     boolean;
+  term:          "m2m" | "12";
+  tier_label:    string;
+  clinic_type:   string;
+  setup_lines:   { label: string; amt: number }[];
+  monthly_lines: { label: string; amt: number }[];
+};
+
 export type PdfData = {
   // Client
   company_name:    string;
@@ -31,6 +44,8 @@ export type PdfData = {
   booking_platform_notes: string;
   // Products (full info, not just keys)
   selected_products:  PdfProduct[];
+  /** When set, the price comes from this quote instead of per-product catalogue prices. */
+  quote?:             PdfQuote | null;
   upfront_total_aud:  number;
   monthly_total_aud:  number;
   // Discount (0 percent = none)
@@ -364,6 +379,48 @@ export function ApplicationPDF({ data }: { data: PdfData }) {
           <Text style={s.sectionTitle}>Products &amp; Quote</Text>
           {data.selected_products.length === 0 ? (
             <Text style={s.paraEmpty}>No products selected.</Text>
+          ) : data.quote ? (
+            <View style={s.table}>
+              <View style={s.tableHeader}>
+                <Text style={s.tableCol1}>PRODUCT</Text>
+              </View>
+              {data.selected_products.map((p) => (
+                <View style={s.tableRow} key={p.key}>
+                  <Text style={s.tableCell1}>{p.label}</Text>
+                </View>
+              ))}
+
+              <View style={s.totalsBlock}>
+                <View style={s.totalsRow}>
+                  <Text style={s.totalsLabel}>Clinic</Text>
+                  <Text style={s.totalsValue}>{data.quote.clinic_type}, {data.quote.tier_label} tier</Text>
+                </View>
+                <View style={s.totalsRow}>
+                  <Text style={s.totalsLabel}>Term</Text>
+                  <Text style={s.totalsValue}>{data.quote.term === "12" ? "12 months" : "Month to month"}</Text>
+                </View>
+                {data.quote.setup_lines.map((l, i) => (
+                  <View style={s.totalsRow} key={`s${i}`}>
+                    <Text style={s.totalsLabel}>Setup: {l.label}</Text>
+                    <Text style={s.totalsValue}>{fmt(l.amt * (data.quote!.gst_shown ? 1.1 : 1))}</Text>
+                  </View>
+                ))}
+                <View style={s.totalFinal}>
+                  <Text style={s.totalFinalLabel}>Setup (one-off, {data.quote.gst_shown ? "inc" : "ex"} GST)</Text>
+                  <Text style={s.totalFinalValue}>{fmt(data.quote.setup_total * (data.quote.gst_shown ? 1.1 : 1))}</Text>
+                </View>
+                {data.quote.monthly_lines.map((l, i) => (
+                  <View style={s.totalsRow} key={`m${i}`}>
+                    <Text style={s.totalsLabel}>Monthly: {l.label}</Text>
+                    <Text style={s.totalsValue}>{fmt(l.amt * (data.quote!.gst_shown ? 1.1 : 1))}</Text>
+                  </View>
+                ))}
+                <View style={s.totalsRow}>
+                  <Text style={s.totalsLabel}>Monthly total ({data.quote.gst_shown ? "inc" : "ex"} GST)</Text>
+                  <Text style={s.totalsValue}>{fmt(data.quote.monthly_total * (data.quote.gst_shown ? 1.1 : 1))}</Text>
+                </View>
+              </View>
+            </View>
           ) : (
             <View style={s.table}>
               <View style={s.tableHeader}>
